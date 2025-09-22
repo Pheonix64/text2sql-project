@@ -1,0 +1,24 @@
+# Framework Web
+fastapi
+uvicorn[standard]
+
+# Validation de données
+pydantic
+pydantic-settings
+
+# Base de données relationnelle
+psycopg2-binary
+sqlalchemy
+
+# Base de données vectorielle
+chromadb-client
+
+# LLM et Embeddings
+ollama
+sentence-transformers
+
+# Sécurité et validation SQL
+sqlglot
+
+# Gestion de la configuration
+python-dotenv

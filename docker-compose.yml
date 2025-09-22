@@ -1,0 +1,105 @@
+services:
+  postgres-db:
+    image: timescale/timescaledb-ha:pg16-ts2.13
+    container_name: postgres-db
+    # Variables d'environnement pour initialiser la base Postgres (lues depuis .env ou env shell)
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    # Volumes montés : données persistantes et scripts/fichiers d'initialisation
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/indiceconomique_long_v4.csv:/docker-entrypoint-initdb.d/data.csv
+    # Exposition du port Postgres (hôte:conteneur)
+    ports:
+      - "5432:5432"
+    networks:
+      - text2sql-network
+    # Vérification de santé pour attendre que Postgres soit prêt
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Redémarrage automatique sauf si l'utilisateur arrête le conteneur
+    restart: unless-stopped
+
+  chroma-db:
+    image: chromadb/chroma:0.5.0
+    container_name: chroma-db
+    # Volume pour persister les données Chroma
+    volumes:
+      - chroma-data:/chroma/chroma
+    # Port exposé configurable via variable d'environnement CHROMA_PORT
+    ports:
+      - "${CHROMA_PORT}:8000"
+    networks:
+      - text2sql-network
+    # Healthcheck simple (ici toujours true, peut être adapté pour vérifier le service)
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    # Réservation de GPU (nécessite un runtime compatible et Docker configuré pour GPU)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Volume pour stocker les modèles Ollama localement
+    volumes:
+      - ollama-models:/root/.ollama
+    # Port exposé configurable via OLLAMA_PORT (conteneur écoute sur 11434)
+    ports:
+      - "${OLLAMA_PORT}:11434"
+    networks:
+      - text2sql-network
+    tty: true
+    restart: unless-stopped
+
+  api-fastapi:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: api-fastapi
+    # Charger les variables d'environnement depuis le fichier .env
+    env_file:
+      - .env
+    # Port d'exposition pour l'API FastAPI configurable via API_PORT
+    ports:
+      - "${API_PORT}:8000"
+    networks:
+      - text2sql-network
+    # Dépendances de démarrage : attendre que les DB soient prêtes avant de démarrer l'API
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      chroma-db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+# Réseau partagé entre les services
+networks:
+  text2sql-network:
+    driver: bridge
+
+# Volumes persistants utilisés par les services
+volumes:
+  postgres-data:
+    driver: local
+  chroma-data:
+    driver: local
+  ollama-models:
+    driver: local
