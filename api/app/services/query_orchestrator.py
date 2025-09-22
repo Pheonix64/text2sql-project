@@ -1,3 +1,5 @@
+# text-to-sql-project/api/app/services/query_orchestrator.py
+
 import ollama
 import chromadb
 import sqlglot
@@ -5,7 +7,7 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine, text, exc
 from logging import getLogger
 
-from..config import settings
+from app.config import settings
 
 logger = getLogger(__name__)
 
@@ -15,30 +17,34 @@ class QueryOrchestrator:
         self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
         self.chroma_client = chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
         self.sql_collection = self.chroma_client.get_or_create_collection(name=settings.CHROMA_COLLECTION)
-        self.ollama_client = ollama.Client(host=settings.OLLAMA_BASE_URL)
+        # Client asynchrone pour éviter de bloquer l'event loop
+        self.ollama_client = ollama.AsyncClient(host=settings.OLLAMA_BASE_URL)
         
         try:
-            # Utilisation d'un moteur de connexion différent pour l'admin (schéma) et le llm (requêtes)
+            # Connexion pour le LLM (utilisateur read-only)
             self.db_engine = create_engine(settings.DATABASE_URL)
-            # Connexion avec l'utilisateur admin pour récupérer le schéma
-            admin_db_url = f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.POSTGRES_DB}"
-            self.admin_db_engine = create_engine(admin_db_url)
+            # Connexion pour l'admin (pour lire le schéma) via URL encodée
+            self.admin_db_engine = create_engine(settings.ADMIN_DATABASE_URL)
             logger.info("Connexions à la base de données PostgreSQL réussies.")
         except Exception as e:
             logger.error(f"Erreur de connexion à la base de données : {e}")
             raise
 
-        # Récupération dynamique du schéma et des commentaires
         self.db_schema = self._get_rich_db_schema(table_name='indicateurs_economiques_uemoa')
-        
-        # Mise à jour des requêtes de référence pour la nouvelle table
-        self.reference_queries = logger.info("QueryOrchestrator initialisé avec succès.")
+
+        # Requêtes SQL d'exemple pour l'indexation sémantique
+        self.reference_queries = [
+            "SELECT pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE date = '2022-01-01'",
+            "SELECT date, exportations_biens_fob, importations_biens_fob, balance_des_biens FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) = 2021",
+            "SELECT AVG(taux_croissance_reel_pib_pct) FROM indicateurs_economiques_uemoa WHERE date >= '2015-01-01' AND date <= '2020-01-01'",
+            "SELECT MAX(encours_de_la_dette_pct_pib) FROM indicateurs_economiques_uemoa",
+            "SELECT date, taux_inflation_moyen_annuel_ipc_pct FROM indicateurs_economiques_uemoa ORDER BY date DESC LIMIT 5",
+            "SELECT SUM(recettes_fiscales) FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) > 2018",
+            "SELECT date, solde_budgetaire_global_avec_dons FROM indicateurs_economiques_uemoa WHERE taux_inflation_moyen_annuel_ipc_pct > 5.0",
+        ]
+        logger.info("QueryOrchestrator initialisé avec succès.")
 
     def _get_rich_db_schema(self, table_name: str) -> str:
-        """
-        Récupère dynamiquement le schéma de la table, y compris les commentaires
-        sur la table et les colonnes pour enrichir le contexte du LLM.
-        """
         logger.info(f"Récupération du schéma enrichi pour la table '{table_name}'...")
         query = text(f"""
             SELECT
@@ -75,7 +81,7 @@ class QueryOrchestrator:
                         schema_str += f" -- {description}\n"
                     else:
                         schema_str += "\n"
-                schema_str += ");"
+                schema_str = schema_str.rstrip(',\n') + "\n);"
                 logger.info("Schéma enrichi récupéré avec succès.")
                 return schema_str
         except Exception as e:
@@ -83,7 +89,6 @@ class QueryOrchestrator:
             return f"CREATE TABLE {table_name} (...); -- Erreur: impossible de récupérer le schéma détaillé"
 
     def index_reference_queries(self, queries: list[str] | None = None):
-        """Indexe les requêtes SQL de référence dans ChromaDB."""
         queries_to_index = queries or self.reference_queries
         if not queries_to_index:
             logger.warning("Aucune requête de référence à indexer.")
@@ -91,8 +96,11 @@ class QueryOrchestrator:
             
         logger.info(f"Indexation de {len(queries_to_index)} requêtes...")
         if self.sql_collection.count() > 0:
-            ids_to_delete = self.sql_collection.get()['ids']
-            self.sql_collection.delete(ids=ids_to_delete)
+            ids_to_delete = self.sql_collection.get().get('ids') or []
+            if ids_to_delete and isinstance(ids_to_delete[0], list):
+                ids_to_delete = [i for sub in ids_to_delete for i in sub]
+            if ids_to_delete:
+                self.sql_collection.delete(ids=ids_to_delete)
 
         embeddings = self.embedding_model.encode(queries_to_index).tolist()
         self.sql_collection.add(
@@ -104,7 +112,6 @@ class QueryOrchestrator:
         return len(queries_to_index)
 
     def _validate_sql(self, sql_query: str) -> bool:
-        """Validation statique de la requête SQL (inchangée)."""
         try:
             parsed = sqlglot.parse_one(sql_query, read="postgres")
             if not isinstance(parsed, sqlglot.exp.Select):
@@ -117,16 +124,20 @@ class QueryOrchestrator:
             return False
 
     async def process_user_question(self, user_question: str) -> dict:
-        """Exécute le pipeline complet pour répondre à une question."""
         question_embedding = self.embedding_model.encode(user_question).tolist()
         results = self.sql_collection.query(query_embeddings=[question_embedding], n_results=5)
-        context_queries = "\n".join(results['documents']) if results['documents'] else ""
+        # ChromaDB renvoie une liste de listes de documents (par requête)
+        documents = results.get('documents') or []
+        if documents and isinstance(documents[0], list):
+            flat_docs = [doc for sub in documents for doc in sub]
+        else:
+            flat_docs = documents
+        context_queries = "\n".join(flat_docs) if flat_docs else ""
 
-        # Le prompt est maintenant beaucoup plus riche grâce au schéma dynamique
         sql_generation_prompt = f"""
         ### Instruction
         Tu es un expert en SQL PostgreSQL et un analyste économique. Ton objectif est de convertir la question de l'utilisateur en une seule requête SQL SELECT en te basant sur le schéma et les descriptions ci-dessous.
-        Utilise des fonctions temporelles comme DATE_TRUNC, et des agrégations comme AVG, SUM, MAX, MIN, etc., si nécessaire.
+        Utilise des fonctions temporelles comme DATE_TRUNC, et des agrégations comme AVG, SUM, MAX, MIN.
         Ne génère JAMAIS de requêtes qui modifient les données (INSERT, UPDATE, DELETE).
 
         ### Schéma et Descriptions de la Base de Données
@@ -192,5 +203,14 @@ class QueryOrchestrator:
             "sql_result": sql_result_str
         }
 
-# Instance unique de l'orchestrateur pour l'application
-orchestrator = QueryOrchestrator()
+    async def pull_model(self, model: str | None = None) -> dict:
+        """Force le téléchargement du modèle dans Ollama."""
+        target_model = model or settings.LLM_MODEL
+        try:
+            async for status in self.ollama_client.pull(model=target_model, stream=True):
+                # On pourrait logger la progression ici si nécessaire
+                pass
+            return {"status": "success", "model": target_model}
+        except Exception as e:
+            logger.error(f"Erreur lors du pull du modèle '{target_model}' : {e}")
+            return {"status": "error", "message": str(e), "model": target_model}

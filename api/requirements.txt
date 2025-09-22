@@ -11,12 +11,10 @@ psycopg2-binary
 sqlalchemy
 
 # Base de données vectorielle
-chromadb-client
+chromadb
 
-# LLM et Embeddings
+# LLM
 ollama
-sentence-transformers
-
 # Sécurité et validation SQL
 sqlglot
 

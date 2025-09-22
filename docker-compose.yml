@@ -19,7 +19,7 @@ services:
       - text2sql-network
     # Vérification de santé pour attendre que Postgres soit prêt
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+      test: [ "CMD-SHELL", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   chroma-db:
-    image: chromadb/chroma:0.5.0
+    image: chromadb/chroma:latest
     container_name: chroma-db
     # Volume pour persister les données Chroma
     volumes:
@@ -37,12 +37,12 @@ services:
       - "${CHROMA_PORT}:8000"
     networks:
       - text2sql-network
-    # Healthcheck simple (ici toujours true, peut être adapté pour vérifier le service)
+    # Healthcheck réel: ping de l'endpoint pre-flight-checks
     healthcheck:
-      test: ["CMD", "true"]
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:8000/api/v2/pre-flight-checks > /dev/null 2>&1 || exit 1" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
   ollama:
@@ -55,7 +55,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     # Volume pour stocker les modèles Ollama localement
     volumes:
       - ollama-models:/root/.ollama
@@ -65,6 +65,11 @@ services:
     networks:
       - text2sql-network
     tty: true
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:11434/api/tags > /dev/null 2>&1 || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   api-fastapi:
@@ -87,7 +92,7 @@ services:
       chroma-db:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
 # Réseau partagé entre les services

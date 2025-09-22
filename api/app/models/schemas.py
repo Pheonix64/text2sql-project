@@ -21,3 +21,13 @@ class IndexingResponse(BaseModel):
     """Schéma pour la réponse de l'indexation."""
     status: str
     indexed_count: int
+
+class PullModelRequest(BaseModel):
+    """Schéma pour demander le téléchargement d'un modèle Ollama spécifique."""
+    model: str | None = None
+
+class PullModelResponse(BaseModel):
+    """Schéma pour la réponse du téléchargement du modèle."""
+    status: str
+    model: str | None = None
+    message: str | None = None

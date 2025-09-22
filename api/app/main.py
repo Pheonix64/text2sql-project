@@ -1,7 +1,9 @@
+# text-to-sql-project/api/app/main.py
+
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from.routers import conversation
-from.services.query_orchestrator import orchestrator
+from app.routers import conversation
+from app.services.query_orchestrator import QueryOrchestrator
 import logging
 
 # Configuration de la journalisation
@@ -11,18 +13,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 async def lifespan(app: FastAPI):
     """
     Gère les événements de démarrage et d'arrêt de l'application.
-    C'est ici que nous initialisons les modèles et les connexions.
     """
-    # Au démarrage :
     logging.info("Démarrage de l'application...")
-    # L'initialisation de l'orchestrateur se fait à l'import, mais on peut
-    # ajouter ici des tâches de démarrage comme l'indexation initiale.
-    orchestrator.index_reference_queries()
+    # Instanciation tardive pour garantir que les services dépendants sont prêts
+    app.state.orchestrator = QueryOrchestrator()
+    # Indexation initiale des requêtes de référence
+    app.state.orchestrator.index_reference_queries()
     yield
-    # À l'arrêt :
     logging.info("Arrêt de l'application...")
-    # On pourrait ajouter ici du code de nettoyage si nécessaire.
-    
 
 # Initialisation de l'application FastAPI
 app = FastAPI(
