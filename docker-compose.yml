@@ -39,7 +39,7 @@ services:
       - text2sql-network
     # Healthcheck réel: ping de l'endpoint pre-flight-checks
     healthcheck:
-      test: [ "CMD-SHELL", "wget -qO- http://localhost:8000/api/v2/pre-flight-checks > /dev/null 2>&1 || exit 1" ]
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/pre-flight-checks', timeout=5)\"" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -66,7 +66,7 @@ services:
       - text2sql-network
     tty: true
     healthcheck:
-      test: [ "CMD-SHELL", "wget -qO- http://localhost:11434/api/tags > /dev/null 2>&1 || exit 1" ]
+      test: [ "CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1" ]
       interval: 15s
       timeout: 5s
       retries: 20
