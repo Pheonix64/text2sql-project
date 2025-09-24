@@ -6,6 +6,7 @@ import sqlglot
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine, text, exc
 from logging import getLogger
+import re
 
 from app.config import settings
 
@@ -43,6 +44,32 @@ class QueryOrchestrator:
             "SELECT date, solde_budgetaire_global_avec_dons FROM indicateurs_economiques_uemoa WHERE taux_inflation_moyen_annuel_ipc_pct > 5.0",
         ]
         logger.info("QueryOrchestrator initialisé avec succès.")
+
+    def _extract_sql_from_text(self, text: str) -> str:
+        """
+        Extrait la requête SQL d'un texte potentiellement verbeux renvoyé par le LLM.
+        Stratégie:
+        1) Si un bloc ```sql ... ``` est présent, on l'extrait.
+        2) Sinon, on cherche le premier mot-clé SELECT ou WITH et on prend jusqu'au premier ';' si présent.
+        3) Trim final.
+        """
+        if not text:
+            return ""
+        # 1) Bloc Markdown ```sql ... ```
+        code_block = re.search(r"```(?:sql)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
+        if code_block:
+            candidate = code_block.group(1).strip()
+            return candidate
+        # 2) Heuristique SELECT/WITH
+        m = re.search(r"\b(SELECT|WITH)\b[\s\S]*", text, flags=re.IGNORECASE)
+        if m:
+            candidate = text[m.start():]
+            # couper au premier ';' si présent
+            semi = candidate.find(';')
+            if semi != -1:
+                candidate = candidate[:semi+1]
+            return candidate.strip()
+        return text.strip()
 
     def _get_rich_db_schema(self, table_name: str) -> str:
         logger.info(f"Récupération du schéma enrichi pour la table '{table_name}'...")
@@ -113,11 +140,38 @@ class QueryOrchestrator:
 
     def _validate_sql(self, sql_query: str) -> bool:
         try:
-            parsed = sqlglot.parse_one(sql_query, read="postgres")
-            if not isinstance(parsed, sqlglot.exp.Select):
-                logger.warning(f"Validation échouée : la requête n'est pas un SELECT. Requête : {sql_query}")
+            # 1) Bloquer explicitement toute instruction non-lecture (sécurité défensive)
+            banned = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|MERGE|CALL|COPY|VACUUM|ANALYZE|EXPLAIN)\b", re.IGNORECASE)
+            if banned.search(sql_query):
+                logger.warning("Validation échouée : mot-clé non autorisé détecté (DML/DDL).")
                 return False
-            logger.info(f"Validation SQL réussie pour : {sql_query}")
+
+            # 2) S'assurer qu'il n'y a qu'une seule instruction
+            exprs = sqlglot.parse(sql_query, read="postgres")
+            if not exprs or len(exprs) != 1:
+                logger.warning("Validation échouée : aucune ou plusieurs instructions détectées.")
+                return False
+
+            expr = exprs[0]
+
+            # 3) Aplatir un éventuel WITH (CTE) pour récupérer l'expression sous-jacente
+            if isinstance(expr, sqlglot.exp.With):
+                base_expr = expr.this  # le SELECT/UNION encapsulé par le WITH
+            else:
+                base_expr = expr
+
+            # 4) Autoriser uniquement des requêtes de lecture : SELECT, UNION/EXCEPT/INTERSECT de SELECT
+            allowed_types = (
+                sqlglot.exp.Select,
+                sqlglot.exp.Union,
+                sqlglot.exp.Except,
+                sqlglot.exp.Intersect,
+            )
+            if not isinstance(base_expr, allowed_types):
+                logger.warning(f"Validation échouée : l'expression n'est pas une requête SELECT/UNION. Type: {type(base_expr)}")
+                return False
+
+            logger.info("Validation SQL réussie (lecture uniquement).")
             return True
         except Exception as e:
             logger.error(f"Erreur de validation SQL : {e}. Requête : {sql_query}")
@@ -135,29 +189,69 @@ class QueryOrchestrator:
         context_queries = "\n".join(flat_docs) if flat_docs else ""
 
         sql_generation_prompt = f"""
-        ### Instruction
-        Tu es un expert en SQL PostgreSQL et un analyste économique. Ton objectif est de convertir la question de l'utilisateur en une seule requête SQL SELECT en te basant sur le schéma et les descriptions ci-dessous.
-        Utilise des fonctions temporelles comme DATE_TRUNC, et des agrégations comme AVG, SUM, MAX, MIN.
-        Ne génère JAMAIS de requêtes qui modifient les données (INSERT, UPDATE, DELETE).
+            ### Instruction (génération SQL)
+            Tu es un expert SQL (PostgreSQL) et analyste économique spécialisé en politique monétaire de l'UEMOA.  
+            Ton objectif : convertir la question de l'utilisateur en **UNE SEULE** requête SQL **SELECT** (ou une requête WITH ... SELECT) basée strictement sur le schéma et les descriptions fournis.
 
-        ### Schéma et Descriptions de la Base de Données
-        {self.db_schema}
+            Contraintes strictes :
+            - **Toutes les données de la base concernent par défaut l'ensemble de l'Union (BCEAO)** et non un pays spécifique. 
+            → Ne filtre un pays particulier **que si la colonne `country` (ou équivalent) est explicitement utilisée dans la question**.
+            - **Retourne UNIQUEMENT la requête SQL**, sans texte additionnel, sans explication, sans Markdown, sans commentaires, sans backticks. La sortie doit commencer par `SELECT` ou `WITH` et se terminer par un point-virgule (`;`).
+            - **Ne génère jamais** de requêtes de modification (INSERT, UPDATE, DELETE, DROP, etc.).
+            - Préfère les fonctions temporelles PostgreSQL (ex. `DATE_TRUNC`) pour les agrégations sur date.
+            - Utilise des agrégations appropriées (`AVG`, `SUM`, `COUNT`, `MAX`, `MIN`) quand la question demande des synthèses.
+            - **N'invente pas** de colonnes, tables ou valeurs : n'utilise que les tables/colonnes du schéma donné.
+            - Si la question demande une liste non agrégée potentiellement volumineuse, **limite la sortie à 1000 lignes** et ajoute un `ORDER BY` pertinent.
+            - Si la question demande une comparaison (périodes, zones, entités), inclure clairement la clause `GROUP BY` nécessaire.
+            - Si l'intention de la question est ambiguë (ex. période non précisée), choisir une hypothèse raisonnable basée sur les colonnes dates du schéma (sans commentaire dans la sortie).
+            - Utilise des alias clairs pour les champs agrégés (ex. `AS avg_inflation`).
 
-        ### Exemples de Requêtes Similaires
-        {context_queries}
+            ### Schéma et descriptions
+            {self.db_schema}
 
-        ### Question de l'Utilisateur
-        "{user_question}"
+            ### Exemples de requêtes similaires
+            {context_queries}
 
-        ### Requête SQL
-        """
+            ### Question de l'utilisateur
+            "{user_question}"
+
+            ### Requête SQL
+            """
+
+
 
         try:
             response = await self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt)
-            generated_sql = response['response'].strip().replace("```sql", "").replace("```", "").strip()
+            generated_sql = self._extract_sql_from_text(response['response'])
         except Exception as e:
-            logger.error(f"Erreur lors de la génération SQL par Ollama : {e}")
-            return {"answer": "Désolé, une erreur est survenue lors de la génération de la requête SQL."}
+            msg = str(e).lower()
+            # Si le modèle n'est pas trouvé (404), tenter un pull puis retenter une fois
+            if "not found" in msg or "404" in msg:
+                logger.warning(f"Modèle '{settings.LLM_MODEL}' introuvable. Tentative de téléchargement puis nouvel essai...")
+                pull_res = await self.pull_model(settings.LLM_MODEL)
+                if pull_res.get("status") == "success":
+                    try:
+                        response = await self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt)
+                        generated_sql = self._extract_sql_from_text(response['response'])
+                    except Exception as e2:
+                        logger.error(f"Échec de la génération après pull du modèle: {e2}")
+                        return {"answer": "Désolé, échec de la génération SQL même après téléchargement du modèle."}
+                else:
+                    logger.error(f"Échec du téléchargement du modèle: {pull_res}")
+                    return {"answer": "Désolé, le modèle LLM n'est pas disponible et le téléchargement a échoué."}
+            else:
+                logger.error(f"Erreur lors de la génération SQL par Ollama : {e}")
+                return {"answer": "Désolé, une erreur est survenue lors de la génération de la requête SQL."}
+
+        # Si aucune requête n'a pu être générée, retourner une réponse claire sans passer à la validation/exécution
+        if not generated_sql or not re.search(r"^\s*(SELECT|WITH)\b", generated_sql, flags=re.IGNORECASE):
+            return {
+                "answer": (
+                    "Je n'ai pas pu générer une requête SQL pertinente pour cette question. "
+                    "Pouvez-vous préciser la période, les colonnes ou la condition souhaitée ?"
+                ),
+                "generated_sql": generated_sql
+            }
 
         if not self._validate_sql(generated_sql):
             return {
@@ -178,18 +272,40 @@ class QueryOrchestrator:
             }
 
         natural_language_prompt = f"""
-        ### Instruction
-        En te basant sur la question de l'utilisateur et le résultat de la requête SQL, formule une réponse claire, concise et professionnelle en français.
-        Si le résultat est une liste ou contient des chiffres, présente-le de manière lisible.
+            ### Instruction (rédaction d'analyse augmentée)
+            Tu es un analyste économique de la BCEAO. En te basant **seulement** sur la QUESTION de l'utilisateur et **EXCLUSIVEMENT** sur le RÉSULTAT SQL fourni, rédige une **analyse augmentée, synthétique, explicative, exacte et rationnelle** en français.  
+            **Toutes les données de la base concernent l'ensemble de l'Union (BCEAO), pas un pays spécifique.** Ne parle d’un pays particulier que si la colonne `country` (ou équivalent) est explicitement présente dans `sql_result_str` ou mentionnée dans la question.
 
-        ### Question de l'utilisateur
-        {user_question}
+            Ton style :
+            - Narratif et évolutif : commence par un bref résumé, puis déroule progressivement l'interprétation.
+            - Respecte un ton pédagogique, clair et professionnel adapté à un public analyste/chargé de décision.
+            - Sois partenaire de réflexion : suggère pistes et questions suivantes sans inventer.
 
-        ### Résultat SQL
-        {sql_result_str}
+            Structure recommandée (sans mettre les titres comme,**TL;DR**,**Contexte et portée**, etc.):
+            1. **TL;DR** : synthèse immédiate (1–2 phrases).
+            2. **Contexte et portée** : préciser que les résultats concernent l'ensemble de l'Union BCEAO, sauf si `country` est utilisé → dans ce cas distinguer par pays.
+            3. **Métriques clés** : mettre en avant les chiffres issus de `sql_result_str`, formatés clairement.
+            4. **Interprétation raisonnée** : expliquer ce que signifient ces chiffres pour la politique monétaire de l'Union.
+            5. **Méthodologie / provenance** : préciser brièvement les colonnes utilisées (ex. "agrégation mensuelle sur `month` et `avg_rate`").
+            6. **Limites & hypothèses** : indiquer ce que les données ne permettent pas d’affirmer (granularité, absence de dimension pays).
+            7. **Recommandations** : 2–4 idées d’analyses complémentaires.
+            8. **Invitation à reformuler** : si la réponse est incomplète ou ambiguë, demander précision à l’utilisateur.
 
-        ### Réponse
-        """
+            Règles :
+            - Si `sql_result_str` est vide ou insuffisant → répondre honnêtement : **"Aucune donnée exploitable trouvée — merci de préciser/affiner votre question."**
+            - Ne jamais inventer de chiffres ni d’informations hors `sql_result_str`.
+            - Si ambiguïté → proposer 1–2 reformulations possibles.
+
+            ### Question de l'utilisateur
+            {user_question}
+
+            ### Résultat SQL
+            {sql_result_str}
+
+            ### Réponse
+            """
+
+
         try:
             final_response = await self.ollama_client.generate(model=settings.LLM_MODEL, prompt=natural_language_prompt)
             final_answer = final_response['response']
@@ -207,9 +323,8 @@ class QueryOrchestrator:
         """Force le téléchargement du modèle dans Ollama."""
         target_model = model or settings.LLM_MODEL
         try:
-            async for status in self.ollama_client.pull(model=target_model, stream=True):
-                # On pourrait logger la progression ici si nécessaire
-                pass
+            # Appel non-stream pour simplifier, on attend la fin du pull
+            await self.ollama_client.pull(model=target_model)
             return {"status": "success", "model": target_model}
         except Exception as e:
             logger.error(f"Erreur lors du pull du modèle '{target_model}' : {e}")

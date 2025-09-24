@@ -81,6 +81,9 @@ services:
     env_file:
       - .env
     # Port d'exposition pour l'API FastAPI configurable via API_PORT
+    volumes:
+      - ./api/app:/home/appuser/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
       - "${API_PORT}:8000"
     networks:
