@@ -7,6 +7,7 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine, text, exc
 from logging import getLogger
 import re
+import asyncio
 
 from app.config import settings
 
@@ -20,10 +21,19 @@ class QueryOrchestrator:
         self.sql_collection = self.chroma_client.get_or_create_collection(name=settings.CHROMA_COLLECTION)
         # Client asynchrone pour éviter de bloquer l'event loop
         self.ollama_client = ollama.AsyncClient(host=settings.OLLAMA_BASE_URL)
+        # Sémaphores pour limiter la concurrence par ressource
+        self.embed_sem = asyncio.Semaphore(2)
+        self.chroma_sem = asyncio.Semaphore(4)
+        self.llm_sem = asyncio.Semaphore(2)
         
         try:
             # Connexion pour le LLM (utilisateur read-only)
-            self.db_engine = create_engine(settings.DATABASE_URL)
+            self.db_engine = create_engine(
+                settings.DATABASE_URL,
+                pool_size=10,
+                max_overflow=20,
+                pool_pre_ping=True,
+            )
             # Connexion pour l'admin (pour lire le schéma) via URL encodée
             self.admin_db_engine = create_engine(settings.ADMIN_DATABASE_URL)
             logger.info("Connexions à la base de données PostgreSQL réussies.")
@@ -44,6 +54,111 @@ class QueryOrchestrator:
             "SELECT date, solde_budgetaire_global_avec_dons FROM indicateurs_economiques_uemoa WHERE taux_inflation_moyen_annuel_ipc_pct > 5.0",
         ]
         logger.info("QueryOrchestrator initialisé avec succès.")
+
+    def _is_question_harmful(self, text_q: str) -> bool:
+        """
+        Détection simple (heuristique) de contenus dangereux/illégaux.
+        Si détecté, on bloque en amont sans appeler d'embed/LLM.
+        """
+        if not text_q:
+            return False
+        q = text_q.lower()
+        banned_terms = [
+            # ==== FRANÇAIS ====
+            # Violence / armes
+            "bombe", "explosif", "fabrication d'arme", "arme artisanale", "arme", "pistolet", "fusil",
+            "grenade", "cocktail molotov", "mitraillette", "kalachnikov", "munitions", "couteau", "assassin",
+            "meurtre", "tuer", "massacre", "terrorisme", "attentat", "prise d'otage", "violence",
+
+            # Cybercriminalité
+            "piratage", "hacker", "pirater", "craquer", "intrusion", "malware", "ransomware", 
+            "phishing", "cheval de troie", "virus informatique", "backdoor", "attaque ddos",
+            "keylogger", "spyware",
+
+            # Drogues / substances
+            "drogue", "stupéfiant", "cannabis", "cocaïne", "héroïne", "ecstasy", "lsd", "meth", 
+            "opium", "poison", "toxicomanie",
+
+            # Escroquerie / arnaque
+            "arnaque", "escroquerie", "fraude", "blanchiment", "usurpation d'identité",
+
+            # Contenus sensibles
+            "sexe", "pornographie", "pédophilie", "inceste", "viol", "prostitution",
+
+            # ==== ENGLISH ====
+            # Violence / weapons
+            "bomb", "explosive", "make a bomb", "weapon", "homemade gun", "grenade", "molotov",
+            "gun", "rifle", "pistol", "ammunition", "knife", "terrorism", "attack", "shooting", 
+            "murder", "kill", "massacre", "hostage",
+
+            # Cybercrime
+            "hack", "hacking", "crack", "malware", "ransomware", "phishing", "scam", "trojan",
+            "virus", "ddos", "keylogger", "spyware", "backdoor",
+
+            # Drugs / substances
+            "drug", "cannabis", "cocaine", "heroin", "ecstasy", "lsd", "meth", "opium", "toxic",
+            "poison",
+
+            # Fraud / scams
+            "fraud", "identity theft", "money laundering", "phishing scam",
+
+            # Sensitive content
+            "sex", "porn", "child porn", "incest", "rape", "prostitution",
+        ]
+
+        return any(term in q for term in banned_terms)
+
+    def _needs_data_retrieval(self, text_q: str) -> bool:
+        """
+        Heuristique rapide pour décider si la question vise les données économiques (→ embeddings + SQL)
+        ou si c'est hors-scope (→ réponse générale par LLM sans SQL).
+        """
+        if not text_q:
+            return False
+        q = text_q.lower()
+        keywords = [
+            # Domaines économiques / termes du schéma probable
+            "uemoa", "bceao", "pib", "inflation", "taux", "dette", "recettes", "importations",
+            "exportations", "balance", "solde", "date", "indicateurs", "economiques", "économiques",
+            # SQL-intent
+            "select", "requete", "requête", "sql", "table", "colonne", "colonnes", "where", "group by",
+            # Noms de colonnes courants
+            "taux_croissance_reel_pib_pct", "taux_inflation_moyen_annuel_ipc_pct",
+            "encours_de_la_dette_pct_pib", "solde_budgetaire_global_hors_dons",
+            "exportations_biens_fob", "importations_biens_fob",
+        ]
+        return any(kw in q for kw in keywords)
+
+    async def _answer_general_question(self, user_question: str) -> str:
+        """Répond aux questions générales (hors extraction SQL) via LLM, en français."""
+        prompt = f"""
+            Tu es un assistant utile et pédagogique qui répond en français de manière concise et exacte.
+            Réponds à la question suivante de façon simple et factuelle.
+
+            Question: {user_question}
+            Réponse:
+        """
+        try:
+            async with self.llm_sem:
+                res = await asyncio.wait_for(
+                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=prompt),
+                    timeout=60,
+                )
+            return res.get('response', '').strip() or "Je n'ai pas de réponse claire à fournir pour cette question."
+        except Exception as e:
+            logger.error(f"Erreur LLM en mode général: {e}")
+            return "Désolé, une erreur est survenue lors de la génération de la réponse."
+
+    async def _execute_sql_readonly(self, sql: str) -> list[dict]:
+        """Exécute une requête SQL en lecture seule via un thread pour ne pas bloquer l'event loop."""
+        def run():
+            with self.db_engine.connect() as connection:
+                result_proxy = connection.execute(text(sql))
+                return [dict(row._mapping) for row in result_proxy]
+        try:
+            return await asyncio.to_thread(run)
+        except exc.SQLAlchemyError as e:
+            raise e
 
     def _extract_sql_from_text(self, text: str) -> str:
         """
@@ -178,8 +293,24 @@ class QueryOrchestrator:
             return False
 
     async def process_user_question(self, user_question: str) -> dict:
-        question_embedding = self.embedding_model.encode(user_question).tolist()
-        results = self.sql_collection.query(query_embeddings=[question_embedding], n_results=5)
+        # 0) Sécurité: blocage des contenus dangereux/illégaux
+        if self._is_question_harmful(user_question):
+            return {"answer": "Désolé, je ne peux pas traiter cette demande."}
+
+        # 0.1) Routage d'intention: si la question n'est pas orientée données/SQL, répondre directement via LLM
+        if not self._needs_data_retrieval(user_question):
+            answer = await self._answer_general_question(user_question)
+            return {"answer": answer}
+
+        async with self.embed_sem:
+            question_embedding_arr = await asyncio.to_thread(self.embedding_model.encode, user_question)
+        question_embedding = question_embedding_arr.tolist()
+        async with self.chroma_sem:
+            results = await asyncio.to_thread(
+                self.sql_collection.query,
+                query_embeddings=[question_embedding],
+                n_results=5,
+            )
         # ChromaDB renvoie une liste de listes de documents (par requête)
         documents = results.get('documents') or []
         if documents and isinstance(documents[0], list):
@@ -221,7 +352,11 @@ class QueryOrchestrator:
 
 
         try:
-            response = await self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt)
+            async with self.llm_sem:
+                response = await asyncio.wait_for(
+                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt),
+                    timeout=90,
+                )
             generated_sql = self._extract_sql_from_text(response['response'])
         except Exception as e:
             msg = str(e).lower()
@@ -231,7 +366,11 @@ class QueryOrchestrator:
                 pull_res = await self.pull_model(settings.LLM_MODEL)
                 if pull_res.get("status") == "success":
                     try:
-                        response = await self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt)
+                        async with self.llm_sem:
+                            response = await asyncio.wait_for(
+                                self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt),
+                                timeout=90,
+                            )
                         generated_sql = self._extract_sql_from_text(response['response'])
                     except Exception as e2:
                         logger.error(f"Échec de la génération après pull du modèle: {e2}")
@@ -260,10 +399,8 @@ class QueryOrchestrator:
             }
 
         try:
-            with self.db_engine.connect() as connection:
-                result_proxy = connection.execute(text(generated_sql))
-                sql_result = [dict(row._mapping) for row in result_proxy]
-                sql_result_str = str(sql_result)
+            sql_result = await self._execute_sql_readonly(generated_sql)
+            sql_result_str = str(sql_result)
         except exc.SQLAlchemyError as e:
             logger.error(f"Erreur lors de l'exécution de la requête SQL : {e}")
             return {
@@ -307,7 +444,11 @@ class QueryOrchestrator:
 
 
         try:
-            final_response = await self.ollama_client.generate(model=settings.LLM_MODEL, prompt=natural_language_prompt)
+            async with self.llm_sem:
+                final_response = await asyncio.wait_for(
+                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=natural_language_prompt),
+                    timeout=90,
+                )
             final_answer = final_response['response']
         except Exception as e:
             logger.error(f"Erreur lors de la génération de la réponse finale par Ollama : {e}")
@@ -324,7 +465,8 @@ class QueryOrchestrator:
         target_model = model or settings.LLM_MODEL
         try:
             # Appel non-stream pour simplifier, on attend la fin du pull
-            await self.ollama_client.pull(model=target_model)
+            async with self.llm_sem:
+                await asyncio.wait_for(self.ollama_client.pull(model=target_model), timeout=600)
             return {"status": "success", "model": target_model}
         except Exception as e:
             logger.error(f"Erreur lors du pull du modèle '{target_model}' : {e}")
