@@ -1,0 +1,152 @@
+{
+    "metadata": {
+        "model_name": "BCEAO_Inflation_Predictor_v2.1",
+        "timestamp": "2024-12-18T10:30:00Z",
+        "prediction_horizon": "4 quarters",
+        "base_currency": "FCFA",
+        "target_indicator": "inflation_rate_annual_pct"
+    },
+    "predictions": {
+        "2024-Q1": 2.45,
+        "2024-Q2": 2.78,
+        "2024-Q3": 3.12,
+        "2024-Q4": 2.94
+    },
+    "confidence_intervals": {
+        "2024-Q1": {
+            "lower": 1.95,
+            "upper": 2.95
+        },
+        "2024-Q2": {
+            "lower": 2.28,
+            "upper": 3.28
+        },
+        "2024-Q3": {
+            "lower": 2.62,
+            "upper": 3.62
+        },
+        "2024-Q4": {
+            "lower": 2.44,
+            "upper": 3.44
+        }
+    },
+    "global_shap_importance": {
+        "taux_change_eur_fcfa": 0.342,
+        "prix_petrole_brent_usd": 0.276,
+        "masse_monetaire_m2_croissance": 0.218,
+        "balance_commerciale_pct_pib": 0.164,
+        "production_industrielle_uemoa": 0.089,
+        "taux_directeur_bceao": 0.067,
+        "prix_alimentation_indice": 0.058,
+        "dette_publique_pct_pib": 0.045,
+        "transferts_diaspora_mds_fcfa": 0.032,
+        "pluviometrie_index": 0.021
+    },
+    "shap_summary_details": {
+        "model_type": "GradientBoostingRegressor",
+        "training_period": "2010-Q1 to 2023-Q4",
+        "feature_count": 15,
+        "observation_count": 1248,
+        "cross_validation_score": 0.873,
+        "mean_absolute_error": 0.38,
+        "root_mean_squared_error": 0.52,
+        "feature_selection_method": "recursive_feature_elimination",
+        "hyperparameter_tuning": "bayesian_optimization",
+        "shap_explainer_type": "TreeExplainer"
+    },
+    "individual_shap_explanations": {
+        "2024-Q1": {
+            "base_value": 2.1,
+            "prediction": 2.45,
+            "feature_contributions": {
+                "taux_change_eur_fcfa": 0.28,
+                "prix_petrole_brent_usd": -0.15,
+                "masse_monetaire_m2_croissance": 0.22,
+                "balance_commerciale_pct_pib": 0.08,
+                "production_industrielle_uemoa": 0.03,
+                "taux_directeur_bceao": -0.05,
+                "prix_alimentation_indice": 0.12,
+                "dette_publique_pct_pib": -0.02,
+                "transferts_diaspora_mds_fcfa": -0.01,
+                "pluviometrie_index": 0.02
+            }
+        },
+        "2024-Q2": {
+            "base_value": 2.1,
+            "prediction": 2.78,
+            "feature_contributions": {
+                "taux_change_eur_fcfa": 0.35,
+                "prix_petrole_brent_usd": 0.18,
+                "masse_monetaire_m2_croissance": 0.25,
+                "balance_commerciale_pct_pib": 0.05,
+                "production_industrielle_uemoa": -0.02,
+                "taux_directeur_bceao": -0.08,
+                "prix_alimentation_indice": 0.14,
+                "dette_publique_pct_pib": 0.01,
+                "transferts_diaspora_mds_fcfa": 0.03,
+                "pluviometrie_index": -0.01
+            }
+        },
+        "2024-Q3": {
+            "base_value": 2.1,
+            "prediction": 3.12,
+            "feature_contributions": {
+                "taux_change_eur_fcfa": 0.45,
+                "prix_petrole_brent_usd": 0.32,
+                "masse_monetaire_m2_croissance": 0.28,
+                "balance_commerciale_pct_pib": 0.02,
+                "production_industrielle_uemoa": -0.05,
+                "taux_directeur_bceao": -0.12,
+                "prix_alimentation_indice": 0.18,
+                "dette_publique_pct_pib": 0.03,
+                "transferts_diaspora_mds_fcfa": 0.04,
+                "pluviometrie_index": -0.03
+            }
+        },
+        "2024-Q4": {
+            "base_value": 2.1,
+            "prediction": 2.94,
+            "feature_contributions": {
+                "taux_change_eur_fcfa": 0.38,
+                "prix_petrole_brent_usd": 0.22,
+                "masse_monetaire_m2_croissance": 0.24,
+                "balance_commerciale_pct_pib": 0.06,
+                "production_industrielle_uemoa": 0.01,
+                "taux_directeur_bceao": -0.09,
+                "prix_alimentation_indice": 0.15,
+                "dette_publique_pct_pib": 0.02,
+                "transferts_diaspora_mds_fcfa": 0.02,
+                "pluviometrie_index": 0.01
+            }
+        }
+    },
+    "feature_descriptions": {
+        "taux_change_eur_fcfa": "Taux de change EUR/FCFA (moyenne trimestrielle)",
+        "prix_petrole_brent_usd": "Prix du pétrole Brent en USD/baril",
+        "masse_monetaire_m2_croissance": "Croissance de la masse monétaire M2 (% annuel)",
+        "balance_commerciale_pct_pib": "Balance commerciale en % du PIB",
+        "production_industrielle_uemoa": "Indice de production industrielle UEMOA",
+        "taux_directeur_bceao": "Taux directeur de la BCEAO (%)",
+        "prix_alimentation_indice": "Indice des prix alimentaires UEMOA",
+        "dette_publique_pct_pib": "Dette publique en % du PIB",
+        "transferts_diaspora_mds_fcfa": "Transferts de la diaspora (milliards FCFA)",
+        "pluviometrie_index": "Indice pluviométrique régional"
+    },
+    "model_diagnostics": {
+        "residual_analysis": "Résidus normalement distribués",
+        "autocorrelation_test": "Pas d'autocorrélation significative",
+        "heteroscedasticity_test": "Variance homogène",
+        "stability_test": "Paramètres stables sur la période",
+        "outlier_detection": "3 observations atypiques identifiées et traitées"
+    },
+    "policy_context": {
+        "current_bceao_rate": 2.50,
+        "inflation_target": 3.00,
+        "target_range": {
+            "lower": 1.00,
+            "upper": 3.00
+        },
+        "last_policy_meeting": "2024-11-15",
+        "next_policy_meeting": "2025-01-20"
+    }
+}

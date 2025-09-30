@@ -15,8 +15,12 @@ chromadb
 
 # LLM
 ollama
+
 # Sécurité et validation SQL
 sqlglot
+
+# Embeddings pour la recherche sémantique
+sentence-transformers
 
 # Gestion de la configuration
 python-dotenv

@@ -160,6 +160,121 @@ class QueryOrchestrator:
         except exc.SQLAlchemyError as e:
             raise e
 
+    async def generate_forecast_narrative(self, body) -> tuple[str, dict]:
+        """
+        Génère une narration en LN pour un résultat de prévision fourni (sans calculer la prévision).
+        - Applique une vérification de contenu (harmful) et répond poliment si besoin.
+        - Utilise le LLM partagé avec les sémaphores et timeouts existants.
+        Retourne (narrative, summary_stats_dict).
+        """
+        # 1) Sécurité du prompt/user input
+        user_ctrl = f"{body.title or ''} {body.target} {body.horizon or ''}".strip()
+        if self._is_question_harmful(user_ctrl):
+            return "Sorry, I can't assist with that.", {
+                "count": 0, "min": 0.0, "max": 0.0, "mean": 0.0, "start_value": 0.0, "end_value": 0.0,
+                "start_date": None, "end_date": None,
+            }
+
+        # 2) Construire des stats simples (robustesse de base)
+        values = [p.value for p in body.series]
+        dates = [p.date for p in body.series if p.date]
+        if values:
+            vmin, vmax = min(values), max(values)
+            mean = sum(values) / len(values)
+            start_value, end_value = values[0], values[-1]
+        else:
+            vmin = vmax = mean = start_value = end_value = 0.0
+        start_date = dates[0] if dates else None
+        end_date = dates[-1] if dates else None
+        stats = {
+            "count": len(values),
+            "min": float(vmin),
+            "max": float(vmax),
+            "mean": float(mean),
+            "start_value": float(start_value),
+            "end_value": float(end_value),
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+
+        # 3) Composer un prompt sobre (FR/EN)
+        lang = body.language or "fr"
+        tone = body.tone or "professionnel"
+        unit = body.unit or "unités"
+        target = body.target
+        series_preview = []
+        # Limiter la taille du prompt: n'envoyer que les 12 derniers points
+        tail = body.series[-12:] if len(body.series) > 12 else body.series
+        for p in tail:
+            series_preview.append({"date": p.date, "value": p.value})
+
+        if lang == "fr":
+            prompt = (
+                "Tu es un analyste macro-financier spécialisé en politique monétaire dans l'Union Économique et Monétaire Ouest-Africaine (UEMOA/BCEAO). "
+                "Rédige une synthèse claire, concise et professionnelle en français, dans un style narratif et explicatif, ton {tone}. "
+                "Tu reçois ci-dessous des points de prévision pour {target}. "
+                "Tu n'effectues AUCUN calcul de prévision ; tu interprètes uniquement les chiffres fournis.\n\n"
+
+                "Consignes:\n"
+                "- Commence toujours par un TL;DR (1–2 phrases).\n"
+                "- Décris la tendance générale, les points remarquables et le niveau d'incertitude si des bornes sont présentes.\n"
+                "- Indique clairement les unités ({unit}) et la période couverte si disponible.\n"
+                "- Sois factuel et rigoureux : n'invente aucune donnée.\n"
+                "- Ne suggère JAMAIS que les données sont simulées, hypothétiques ou artificielles, sauf si l'entrée le précise explicitement.\n"
+                "- Ne commente pas la provenance, la fiabilité ou la nature de la source des données.\n"
+                "- Ne parle pas d’un pays spécifique si non indiqué : considère par défaut que les données concernent l’ensemble de l’Union (UEMOA/BCEAO).\n"
+                "- Ne rajoute aucun avertissement générique ni formulation du type 'il est important de noter que...' sauf si demandé.\n"
+                "- Termine toujours par 2–3 pistes d’analyse complémentaires, en lien avec la politique monétaire (par exemple : impact potentiel sur la liquidité bancaire, la stabilité des prix, la balance extérieure).\n\n"
+
+                f"Titre: {body.title or 'Prévision'}\n"
+                f"Horizon: {body.horizon or 'non précisé'}\n"
+                f"Unités: {unit}\n"
+                f"Stats (approx.): {stats}\n"
+                f"Derniers points (max 12): {series_preview}\n\n"
+                "Réponse:"
+            )
+
+        else:
+            prompt = (
+                "You are a macro-financial analyst specialized in monetary policy within the West African Economic and Monetary Union (WAEMU/BCEAO). "
+                "Write a clear, concise, and professional narrative in English, tone {tone}. "
+                "You receive forecast points for {target}. "
+                "Do NOT compute new forecasts; only interpret the provided numbers.\n\n"
+
+                "Guidelines:\n"
+                "- Always start with a TL;DR (1–2 sentences).\n"
+                "- Describe the overall trend, highlight notable points, and mention the level of uncertainty if bounds are provided.\n"
+                "- Clearly state the units ({unit}) and the covered period if available.\n"
+                "- Be strictly factual: never invent or extrapolate numbers.\n"
+                "- Never suggest the data is simulated, hypothetical, or artificial unless this is explicitly indicated in the input.\n"
+                "- Do not comment on the reliability, origin, or source of the data.\n"
+                "- Do not mention individual countries unless explicitly present in the input; by default, interpret the data as covering the entire WAEMU (BCEAO).\n"
+                "- Do not add generic disclaimers (e.g., 'it is important to note that...') unless explicitly requested.\n"
+                "- Always close with 2–3 concrete ideas for further analysis, connected to monetary policy (e.g., liquidity management, inflation outlook, external balance).\n\n"
+
+                f"Title: {body.title or 'Forecast'}\n"
+                f"Horizon: {body.horizon or 'unspecified'}\n"
+                f"Units: {unit}\n"
+                f"Stats (approx.): {stats}\n"
+                f"Last points (max 12): {series_preview}\n\n"
+                "Answer:"
+            )
+
+
+        # 4) Appel LLM avec limites et timeouts
+        try:
+            async with self.llm_sem:
+                res = await asyncio.wait_for(
+                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=prompt),
+                    timeout=90,
+                )
+            narrative = res.get("response", "").strip()
+        except Exception as e:
+            logger.error(f"Erreur LLM lors de la narration de prévision: {e}")
+            narrative = "Désolé, une erreur est survenue lors de la génération de la narration."
+
+        return narrative, stats
+
     def _extract_sql_from_text(self, text: str) -> str:
         """
         Extrait la requête SQL d'un texte potentiellement verbeux renvoyé par le LLM.
@@ -471,3 +586,344 @@ class QueryOrchestrator:
         except Exception as e:
             logger.error(f"Erreur lors du pull du modèle '{target_model}' : {e}")
             return {"status": "error", "message": str(e), "model": target_model}
+
+    async def format_inflation_prediction(self, prediction_data: dict) -> dict:
+        """
+        Formate les données de prédiction d'inflation reçues du modèle externe selon le schéma InflationPredictionResponse.
+        
+        Args:
+            prediction_data: Dictionnaire contenant les prédictions d'inflation brutes du modèle
+            
+        Returns:
+            Dictionnaire formaté selon InflationPredictionResponse
+        """
+        try:
+            # Validation et formatage spécifique aux prédictions d'inflation
+            formatted_response = {
+                "predictions": prediction_data.get("predictions", {}),
+                "global_shap_importance": prediction_data.get("global_shap_importance", {}),
+                "shap_summary_details": prediction_data.get("shap_summary_details", {}),
+                "individual_shap_explanations": prediction_data.get("individual_shap_explanations", {}),
+                "confidence_intervals": prediction_data.get("confidence_intervals", None)
+            }
+            
+            # Validation des données d'inflation
+            self._validate_inflation_data(formatted_response)
+            
+            return formatted_response
+            
+        except Exception as e:
+            logger.error(f"Erreur lors du formatage de la prédiction d'inflation : {e}")
+            raise
+
+    async def generate_inflation_interpretation(self, body) -> dict:
+        """
+        Génère une interprétation économique spécialisée des prédictions d'inflation SHAP 
+        pour les économistes et analystes de la BCEAO.
+        
+        Args:
+            body: InflationInterpretationRequest contenant les données de prédiction et paramètres
+            
+        Returns:
+            Dictionnaire contenant l'interprétation économique formatée spécifique à l'inflation
+        """
+        try:
+            # Extraction des données de prédiction d'inflation
+            prediction_data = body.prediction_data
+            language = body.analysis_language
+            audience = body.target_audience
+            include_policy_recs = body.include_policy_recommendations
+            include_monetary_analysis = body.include_monetary_policy_analysis
+            focus_bceao = body.focus_on_bceao_mandate
+            
+            # Construction du prompt d'interprétation spécifique à l'inflation
+            interpretation_prompt = self._build_inflation_interpretation_prompt(
+                prediction_data, language, audience, include_monetary_analysis, focus_bceao
+            )
+            
+            # Génération de l'interprétation via LLM
+            async with self.llm_sem:
+                response = await asyncio.wait_for(
+                    self.ollama_client.generate(
+                        model=settings.LLM_MODEL,
+                        prompt=interpretation_prompt
+                    ),
+                    timeout=120
+                )
+            
+            interpretation_text = response.get("response", "").strip()
+            
+            # Parsing et structuration de la réponse spécifique à l'inflation
+            structured_interpretation = self._parse_inflation_interpretation(
+                interpretation_text, include_policy_recs
+            )
+            
+            return structured_interpretation
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération de l'interprétation d'inflation : {e}")
+            raise
+
+    def _validate_inflation_data(self, prediction_data):
+        """
+        Valide que les données de prédiction d'inflation sont cohérentes.
+        """
+        predictions = prediction_data.get("predictions", {})
+        
+        # Vérifier que les valeurs d'inflation sont dans une plage raisonnable
+        for period, value in predictions.items():
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"Valeur d'inflation invalide pour {period}: {value}")
+            if value < -10 or value > 50:  # Plage raisonnable pour l'inflation (%)
+                logger.warning(f"Valeur d'inflation inhabituelle pour {period}: {value}%")
+        
+        # Vérifier la présence des facteurs d'inflation typiques
+        shap_importance = prediction_data.get("global_shap_importance", {})
+        expected_factors = ["taux_change", "prix_petrole", "masse_monetaire", "alimentation"]
+        
+        for factor in expected_factors:
+            found = any(factor in key.lower() for key in shap_importance.keys())
+            if not found:
+                logger.info(f"Facteur d'inflation typique non trouvé: {factor}")
+
+    def _build_inflation_interpretation_prompt(self, prediction_data, language, audience, include_monetary_analysis, focus_bceao):
+        """
+        Construit le prompt spécialisé pour l'interprétation des prédictions d'inflation.
+        """
+        audience_descriptions = {
+            "economist": {"fr": "économiste spécialisé en politique monétaire", "en": "monetary policy economist"},
+            "analyst": {"fr": "analyste inflation", "en": "inflation analyst"},
+            "policymaker": {"fr": "décideur de politique monétaire", "en": "monetary policymaker"},
+            "general": {"fr": "public général", "en": "general public"}
+        }
+        
+        audience_desc = audience_descriptions[audience][language]
+        institutional_line_fr = ""
+        institutional_line_en = ""
+        if focus_bceao:
+            institutional_line_fr = "- Met en avant le mandat de stabilité des prix de la BCEAO et les obligations statutaires vis-à-vis des États membres."
+            institutional_line_en = "- Highlight BCEAO's price stability mandate and statutory obligations toward member states."
+        
+        
+        # Calcul de la moyenne des prédictions pour contexte
+        predictions = prediction_data.predictions
+        if predictions:
+            avg_inflation = sum(predictions.values()) / len(predictions)
+            trend = "hausse" if list(predictions.values())[-1] > list(predictions.values())[0] else "baisse"
+        else:
+            avg_inflation = 0
+            trend = "stable"
+        
+        if language == "fr":
+            prompt = f"""
+Tu es l'économiste en chef de la BCEAO, spécialisé dans l'analyse de l'inflation et la politique monétaire de l'UEMOA.
+Tu dois fournir une analyse approfondie des prédictions d'inflation pour un(e) {audience_desc}.
+
+CONTEXTE BCEAO/UEMOA :
+- Objectif de stabilité des prix : maintenir l'inflation autour de 3% (fourchette 1-3%)
+- Mandat principal : assurer la stabilité monétaire dans l'Union
+- Instruments : taux directeur, réserves obligatoires, opérations d'open market
+- Défis : économies dépendantes des matières premières, taux de change fixe avec l'Euro
+{institutional_line_fr}
+
+DONNÉES DU MODÈLE D'INFLATION :
+- Prédictions d'inflation : {predictions}
+- Inflation moyenne prédite : {avg_inflation:.2f}%
+- Tendance : {trend}
+- Facteurs explicatifs SHAP : {prediction_data.global_shap_importance}
+- Intervalles de confiance : {getattr(prediction_data, 'confidence_intervals', 'Non disponibles')}
+- Métadonnées du modèle : {prediction_data.shap_summary_details}
+
+STRUCTURE D'ANALYSE REQUISE :
+### RÉSUMÉ EXÉCUTIF
+- Perspectives d'inflation en 2-3 phrases clés
+- Position par rapport à la cible BCEAO
+- Message principal pour le Comité de Politique Monétaire
+
+### ANALYSE DES DYNAMIQUES INFLATIONNISTES  
+- Décomposition des facteurs par ordre d'importance SHAP
+- Distinction entre inflation importée et domestique
+- Analyse des effets de base et saisonniers
+
+### PRINCIPAUX MOTEURS DE L'INFLATION
+- Top 5 des facteurs explicatifs avec impact quantifié
+- Mécanismes de transmission identifiés
+- Persistance attendue de chaque facteur
+
+### ÉVALUATION DE LA STABILITÉ DES PRIX
+- Écart par rapport à l'objectif de 3%
+- Risques de dérapage inflationniste
+- Probabilité d'atteinte de la cible
+
+{"### RECOMMANDATIONS DE POLITIQUE MONÉTAIRE" if include_monetary_analysis else ""}
+{"- Orientation du taux directeur" if include_monetary_analysis else ""}
+{"- Mesures complémentaires (réserves obligatoires, communication)" if include_monetary_analysis else ""}
+{"- Coordination avec les politiques budgétaires nationales" if include_monetary_analysis else ""}
+
+### RISQUES INFLATIONNISTES
+- Risques de hausse (chocs externes, tensions domestiques)
+- Risques de déflation  
+- Facteurs d'incertitude du modèle
+
+### CONFIANCE ET FIABILITÉ DU MODÈLE
+- Précision historique et performance
+- Limites méthodologiques
+- Scénarios alternatifs
+
+### ANALYSE DES FACTEURS EXTERNES
+- Impact du taux de change EUR/FCFA
+- Influence des prix des matières premières
+- Effets des politiques monétaires internationales
+
+Utilise un ton professionnel adapté à l'audience BCEAO. Référence l'objectif de stabilité des prix et le mandat institutionnel.
+"""
+        else:
+            prompt = f"""
+You are the Chief Economist of BCEAO, specialized in inflation analysis and monetary policy for WAEMU.
+You must provide in-depth inflation forecast analysis for a {audience_desc}.
+
+BCEAO/WAEMU CONTEXT:
+- Price stability objective: maintain inflation around 3% (1-3% range)
+- Primary mandate: ensure monetary stability in the Union
+- Instruments: policy rate, reserve requirements, open market operations
+- Challenges: commodity-dependent economies, fixed exchange rate with Euro
+{institutional_line_en}
+
+INFLATION MODEL DATA:
+- Inflation predictions: {predictions}
+- Average predicted inflation: {avg_inflation:.2f}%
+- Trend: {trend}
+- SHAP explanatory factors: {prediction_data.global_shap_importance}
+- Confidence intervals: {getattr(prediction_data, 'confidence_intervals', 'Not available')}
+- Model metadata: {prediction_data.shap_summary_details}
+
+REQUIRED ANALYSIS STRUCTURE:
+### EXECUTIVE SUMMARY
+- Inflation outlook in 2-3 key sentences
+- Position relative to BCEAO target
+- Main message for Monetary Policy Committee
+
+### INFLATION DYNAMICS ANALYSIS
+- Factor breakdown by SHAP importance order
+- Distinction between imported and domestic inflation
+- Base effects and seasonal analysis
+
+### KEY INFLATION DRIVERS
+- Top 5 explanatory factors with quantified impact
+- Identified transmission mechanisms
+- Expected persistence of each factor
+
+### PRICE STABILITY ASSESSMENT
+- Deviation from 3% objective
+- Inflationary derailment risks
+- Probability of target achievement
+
+{"### MONETARY POLICY RECOMMENDATIONS" if include_monetary_analysis else ""}
+{"- Policy rate guidance" if include_monetary_analysis else ""}
+{"- Complementary measures (reserve requirements, communication)" if include_monetary_analysis else ""}
+{"- Coordination with national fiscal policies" if include_monetary_analysis else ""}
+
+### INFLATION RISKS
+- Upside risks (external shocks, domestic tensions)
+- Deflation risks
+- Model uncertainty factors
+
+### MODEL CONFIDENCE AND RELIABILITY
+- Historical accuracy and performance
+- Methodological limitations
+- Alternative scenarios
+
+### EXTERNAL FACTORS ANALYSIS
+- EUR/FCFA exchange rate impact
+- Commodity price influence
+- International monetary policy effects
+
+Use a professional tone adapted to BCEAO audience. Reference price stability objective and institutional mandate.
+"""
+        
+        return prompt
+
+    def _parse_inflation_interpretation(self, interpretation_text, include_policy_recs):
+        """
+        Parse et structure la réponse d'interprétation d'inflation générée par le LLM.
+        """
+        # Initialisation avec des valeurs par défaut spécifiques à l'inflation
+        parsed = {
+            "executive_summary": "",
+            "inflation_analysis": "",
+            "key_inflation_drivers": [],
+            "price_stability_assessment": "",
+            "monetary_policy_recommendations": None,
+            "inflation_risks": [],
+            "model_confidence": "",
+            "target_deviation_analysis": "",
+            "external_factors_impact": ""
+        }
+        
+        try:
+            # Découpage par sections
+            sections = interpretation_text.split("###")
+            
+            for section in sections:
+                section = section.strip()
+                if not section:
+                    continue
+                    
+                # Identification des sections spécifiques à l'inflation
+                section_lower = section.lower()
+                
+                if any(keyword in section_lower for keyword in ["résumé", "summary", "exécutif", "executive"]):
+                    parsed["executive_summary"] = self._extract_section_content(section)
+                elif any(keyword in section_lower for keyword in ["dynamiques", "dynamics", "analyse", "analysis"]) and "inflation" in section_lower:
+                    parsed["inflation_analysis"] = self._extract_section_content(section)
+                elif any(keyword in section_lower for keyword in ["moteurs", "drivers", "facteurs", "factors"]) and any(keyword in section_lower for keyword in ["inflation", "principaux", "key"]):
+                    parsed["key_inflation_drivers"] = self._extract_list_items(section)
+                elif any(keyword in section_lower for keyword in ["stabilité", "stability", "prix", "price"]):
+                    parsed["price_stability_assessment"] = self._extract_section_content(section)
+                elif any(keyword in section_lower for keyword in ["recommandations", "recommendations", "monétaire", "monetary", "politique", "policy"]):
+                    if include_policy_recs:
+                        parsed["monetary_policy_recommendations"] = self._extract_section_content(section)
+                elif any(keyword in section_lower for keyword in ["risques", "risks"]) and "inflation" in section_lower:
+                    parsed["inflation_risks"] = self._extract_list_items(section)
+                elif any(keyword in section_lower for keyword in ["confiance", "confidence", "fiabilité", "reliability", "modèle", "model"]):
+                    parsed["model_confidence"] = self._extract_section_content(section)
+                elif any(keyword in section_lower for keyword in ["externes", "external", "facteurs", "factors"]):
+                    parsed["external_factors_impact"] = self._extract_section_content(section)
+                elif any(keyword in section_lower for keyword in ["écart", "deviation", "cible", "target"]):
+                    parsed["target_deviation_analysis"] = self._extract_section_content(section)
+            
+            # Si pas de recommandations demandées, on met None
+            if not include_policy_recs:
+                parsed["monetary_policy_recommendations"] = None
+                
+        except Exception as e:
+            logger.error(f"Erreur lors du parsing de l'interprétation d'inflation : {e}")
+            # En cas d'erreur, on met tout le texte dans le résumé exécutif
+            parsed["executive_summary"] = interpretation_text[:500] + "..." if len(interpretation_text) > 500 else interpretation_text
+        
+        return parsed
+
+
+    def _extract_section_content(self, section_text):
+        """Extrait le contenu principal d'une section en supprimant le titre."""
+        lines = section_text.split('\n')
+        # Supprime la première ligne qui contient généralement le titre
+        content_lines = lines[1:] if len(lines) > 1 else lines
+        return '\n'.join(content_lines).strip()
+
+    def _extract_list_items(self, section_text):
+        """Extrait les éléments d'une liste à partir d'une section."""
+        items = []
+        lines = section_text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # Détecte les listes avec -, *, •, ou numérotées
+            if line and (line.startswith('-') or line.startswith('*') or line.startswith('•') or 
+                        (len(line) > 2 and line[0].isdigit() and line[1] in ['.', ')'])):
+                # Nettoie le marqueur de liste
+                clean_item = re.sub(r'^[-*•]\s*|^\d+[.)]\s*', '', line).strip()
+                if clean_item:
+                    items.append(clean_item)
+        
+        return items

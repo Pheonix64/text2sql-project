@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.routers import conversation
+from app.routers import forecast
 from app.services.query_orchestrator import QueryOrchestrator
 import logging
 
@@ -32,6 +33,7 @@ app = FastAPI(
 
 # Inclusion du routeur de conversation
 app.include_router(conversation.router, prefix="/api", tags=["Conversation"])
+app.include_router(forecast.router, prefix="/api/forecast", tags=["Forecast Narrative"])
 
 @app.get("/health", tags=["Health Check"])
 def health_check():
