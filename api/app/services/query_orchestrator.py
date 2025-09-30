@@ -235,14 +235,20 @@ class QueryOrchestrator:
         if not queries_to_index:
             logger.warning("Aucune requête de référence à indexer.")
             return 0
-            
-        logger.info(f"Indexation de {len(queries_to_index)} requêtes...")
-        if self.sql_collection.count() > 0:
-            ids_to_delete = self.sql_collection.get().get('ids') or []
-            if ids_to_delete and isinstance(ids_to_delete[0], list):
-                ids_to_delete = [i for sub in ids_to_delete for i in sub]
-            if ids_to_delete:
-                self.sql_collection.delete(ids=ids_to_delete)
+
+        collection_name = settings.CHROMA_COLLECTION
+        logger.info(f"Début de la ré-indexation de {len(queries_to_index)} requêtes pour la collection '{collection_name}'...")
+
+        # Suppression et recréation de la collection pour garantir un état propre
+        try:
+            self.chroma_client.delete_collection(name=collection_name)
+            logger.info(f"Collection '{collection_name}' existante supprimée.")
+        except Exception as e:
+            # Si la collection n'existe pas, une erreur peut être levée. On l'ignore.
+            logger.warning(f"Avertissement lors de la suppression de la collection (peut être normal si elle n'existait pas): {e}")
+
+        self.sql_collection = self.chroma_client.get_or_create_collection(name=collection_name)
+        logger.info(f"Collection '{collection_name}' prête pour l'indexation.")
 
         embeddings = self.embedding_model.encode(queries_to_index).tolist()
         self.sql_collection.add(
@@ -250,7 +256,7 @@ class QueryOrchestrator:
             documents=queries_to_index,
             ids=[f"query_{i}" for i in range(len(queries_to_index))]
         )
-        logger.info("Indexation terminée.")
+        logger.info(f"Indexation de {len(queries_to_index)} documents terminée.")
         return len(queries_to_index)
 
     def _validate_sql(self, sql_query: str) -> bool:
