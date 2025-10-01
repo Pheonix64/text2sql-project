@@ -7,6 +7,7 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine, text, exc
 from logging import getLogger
 import re
+import json
 import asyncio
 
 from app.config import settings
@@ -54,6 +55,9 @@ class QueryOrchestrator:
             "SELECT date, solde_budgetaire_global_avec_dons FROM indicateurs_economiques_uemoa WHERE taux_inflation_moyen_annuel_ipc_pct > 5.0",
         ]
         logger.info("QueryOrchestrator initialisé avec succès.")
+
+        # Initialisation des ensembles de mots-clés pour le routage des questions
+        self._init_keyword_sets()
 
     def _is_question_harmful(self, text_q: str) -> bool:
         """
@@ -108,46 +112,104 @@ class QueryOrchestrator:
 
         return any(term in q for term in banned_terms)
 
+    def _init_keyword_sets(self) -> None:
+        """Construit dynamiquement les ensembles de mots-clés utilisés pour filtrer les questions."""
+        base_economic_keywords = {
+            "uemoa", "bceao", "union économique", "union monétaire",
+            "pib", "produit intérieur brut", "croissance économique",
+            "inflation", "déflation", "prix", "ipc", "indice prix",
+            "taux", "taux d'intérêt", "taux directeur", "politique monétaire",
+            "dette", "dette publique", "encours dette", "dette pib",
+            "recettes fiscales", "dépenses publiques", "budget", "solde budgétaire",
+            "importations", "exportations", "balance commerciale", "biens fob",
+            "réserves", "réserves internationales", "change", "devise",
+            "masse monétaire", "m2", "m3", "liquidité bancaire",
+            "investissement", "consommation", "épargne", "transferts",
+            "diaspora", "migrants", "transferts migrants",
+            "agriculture", "industrie", "services", "secteurs",
+            "emploi", "chômage", "population active",
+            "fcfa", "franc cfa", "zone franc", "euro",
+            "indicateurs économiques", "statistiques", "données économiques",
+            "contribution", "valeur ajoutée"
+        }
+
+        sql_keywords = {
+            "requête", "requete", "sql", "select", "where", "group by", "order by",
+            "table", "colonne", "colonnes", "base de données", "base donnees",
+            "extraire", "calculer", "comparer", "analyser"
+        }
+
+        date_keywords = {
+            "date", "période", "periode", "année", "annee", "mois", "trimestre",
+            "dernier", "dernière", "récent", "récente", "actuel", "actuelle",
+            "2020", "2021", "2022", "2023", "2024", "2025"
+        }
+
+        dynamic_keywords: set[str] = set()
+        try:
+            with self.admin_db_engine.connect() as conn:
+                rows = conn.execute(
+                    text(
+                        """
+                        SELECT column_name,
+                               COALESCE(col_description((table_schema||'.'||table_name)::regclass::oid, ordinal_position), '') AS comment
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema AND table_name = :table
+                        ORDER BY ordinal_position
+                        """
+                    ),
+                    {"schema": "public", "table": "indicateurs_economiques_uemoa"}
+                ).fetchall()
+
+            for column_name, comment in rows:
+                if not column_name:
+                    continue
+                column_name = column_name.lower()
+                dynamic_keywords.add(column_name)
+                tokens = column_name.split('_')
+                dynamic_keywords.update(tokens)
+                if len(tokens) >= 2:
+                    dynamic_keywords.add(' '.join(tokens[:2]))
+                if len(tokens) >= 3:
+                    dynamic_keywords.add(' '.join(tokens[:3]))
+                if comment:
+                    comment_tokens = re.split(r"[^a-zA-Zàâçéèêëîïôûùüÿñæœ']+", comment.lower())
+                    dynamic_keywords.update({tok for tok in comment_tokens if tok and len(tok) > 3})
+
+            logger.info("Mots-clés dynamiques chargés depuis le schéma: %d entrées", len(dynamic_keywords))
+        except Exception as exc:
+            logger.warning("Impossible de générer les mots-clés dynamiques depuis le schéma: %s", exc)
+
+        self.economic_keywords = base_economic_keywords | dynamic_keywords
+        self.sql_keywords = sql_keywords
+        self.date_keywords = date_keywords
+
     def _needs_data_retrieval(self, text_q: str) -> bool:
         """
-        Heuristique rapide pour décider si la question vise les données économiques (→ embeddings + SQL)
-        ou si c'est hors-scope (→ réponse générale par LLM sans SQL).
+        Heuristique stricte pour décider si la question concerne UNIQUEMENT les données économiques UEMOA/BCEAO.
+        Refuse les questions générales, hors-sujet, ou trop vagues.
         """
-        if not text_q:
+        if not text_q or len(text_q.strip()) < 10:  # Questions trop courtes
             return False
-        q = text_q.lower()
-        keywords = [
-            # Domaines économiques / termes du schéma probable
-            "uemoa", "bceao", "pib", "inflation", "taux", "dette", "recettes", "importations",
-            "exportations", "balance", "solde", "date", "indicateurs", "economiques", "économiques",
-            # SQL-intent
-            "select", "requete", "requête", "sql", "table", "colonne", "colonnes", "where", "group by",
-            # Noms de colonnes courants
-            "taux_croissance_reel_pib_pct", "taux_inflation_moyen_annuel_ipc_pct",
-            "encours_de_la_dette_pct_pib", "solde_budgetaire_global_hors_dons",
-            "exportations_biens_fob", "importations_biens_fob",
-        ]
-        return any(kw in q for kw in keywords)
 
-    async def _answer_general_question(self, user_question: str) -> str:
-        """Répond aux questions générales (hors extraction SQL) via LLM, en français."""
-        prompt = f"""
-            Tu es un assistant utile et pédagogique qui répond en français de manière concise et exacte.
-            Réponds à la question suivante de façon simple et factuelle.
+        q = text_q.lower().strip()
 
-            Question: {user_question}
-            Réponse:
-        """
-        try:
-            async with self.llm_sem:
-                res = await asyncio.wait_for(
-                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=prompt),
-                    timeout=60,
-                )
-            return res.get('response', '').strip() or "Je n'ai pas de réponse claire à fournir pour cette question."
-        except Exception as e:
-            logger.error(f"Erreur LLM en mode général: {e}")
-            return "Désolé, une erreur est survenue lors de la génération de la réponse."
+        economic_count = sum(1 for kw in self.economic_keywords if kw in q)
+        sql_count = sum(1 for kw in self.sql_keywords if kw in q)
+        date_count = sum(1 for kw in self.date_keywords if kw in q)
+
+        # Critères stricts pour accepter la question :
+        # - Au moins 2 mots-clés économiques
+        #   OU (1 mot-clé économique + référence temporelle)
+        #   OU (1 mot-clé économique + intention SQL explicite)
+        has_economic_focus = (
+            economic_count >= 2
+            or (economic_count >= 1 and date_count >= 1)
+            or (economic_count >= 1 and sql_count >= 1)
+        )
+        has_temporal_reference = date_count >= 1 or sql_count >= 1
+
+        return has_economic_focus and has_temporal_reference
 
     async def _execute_sql_readonly(self, sql: str) -> list[dict]:
         """Exécute une requête SQL en lecture seule via un thread pour ne pas bloquer l'event loop."""
@@ -412,10 +474,17 @@ class QueryOrchestrator:
         if self._is_question_harmful(user_question):
             return {"answer": "Désolé, je ne peux pas traiter cette demande."}
 
-        # 0.1) Routage d'intention: si la question n'est pas orientée données/SQL, répondre directement via LLM
+        # 0.1) Routage d'intention: refuser les questions hors-sujet économique UEMOA/BCEAO
         if not self._needs_data_retrieval(user_question):
-            answer = await self._answer_general_question(user_question)
-            return {"answer": answer}
+            return {
+                "answer": (
+                    "Désolé, cette question ne concerne pas les données économiques de l'UEMOA/BCEAO. "
+                    "Je ne peux traiter que les questions relatives aux indicateurs économiques, "
+                    "statistiques financières, ou analyses de données de l'Union Économique et Monétaire Ouest-Africaine. "
+                    "Veuillez reformuler votre question pour qu'elle porte sur des données économiques spécifiques "
+                    "(PIB, inflation, dette, balance commerciale, etc.) avec une période temporelle définie."
+                )
+            }
 
         async with self.embed_sem:
             question_embedding_arr = await asyncio.to_thread(self.embedding_model.encode, user_question)
@@ -704,8 +773,6 @@ class QueryOrchestrator:
             institutional_line_fr = "- Met en avant le mandat de stabilité des prix de la BCEAO et les obligations statutaires vis-à-vis des États membres."
             institutional_line_en = "- Highlight BCEAO's price stability mandate and statutory obligations toward member states."
         
-        
-        # Calcul de la moyenne des prédictions pour contexte
         predictions = prediction_data.predictions
         if predictions:
             avg_inflation = sum(predictions.values()) / len(predictions)
@@ -713,134 +780,281 @@ class QueryOrchestrator:
         else:
             avg_inflation = 0
             trend = "stable"
+
+        # ==============================================================================
+        # Traitement avancé des données SHAP pour justification
+        # ==============================================================================
         
+        # 1. Préparer les SHAP individuels arrondis pour la lisibilité
+        individual_shap = getattr(prediction_data, 'individual_shap_explanations', None) or {}
+        individual_shap_rounded: dict = {}
+        for d, feats in individual_shap.items():
+            try:
+                # Arrondir les valeurs pour alléger le prompt et faciliter la lecture par le LLM
+                individual_shap_rounded[d] = {k: round(float(v), 6) for k, v in feats.items()}
+            except (ValueError, TypeError):
+                individual_shap_rounded[d] = feats # Garder tel quel en cas d'erreur
+
+        # 2. Identifier les Top N contributeurs positifs et négatifs par date
+        TOP_N = 5
+        top_contrib_by_date: dict = {}
+        for d, feats in individual_shap_rounded.items():
+            items = list(feats.items())
+            # Trier pour trouver les contributeurs les plus forts (positifs et négatifs)
+            pos_sorted = [it for it in sorted(items, key=lambda x: x[1], reverse=True) if it[1] > 0]
+            neg_sorted = [it for it in sorted(items, key=lambda x: x[1]) if it[1] < 0]
+            top_contrib_by_date[d] = {
+                "top_positive": pos_sorted[:TOP_N],
+                "top_negative": neg_sorted[:TOP_N],
+            }
+
+        # 3. Lister toutes les features présentes pour éviter l'hallucination de facteurs externes
+        features_present = set()
+        try:
+            features_present.update((prediction_data.global_shap_importance or {}).keys())
+        except Exception:
+            pass
+        for feats in individual_shap_rounded.values():
+            features_present.update(feats.keys())
+        features_present_list = sorted(list(features_present))
+
+        # ==============================================================================
+        # Instructions de granularité selon l'audience
+        # ==============================================================================
+        if language == "fr":
+            audience_instructions = {
+                "policymaker": (
+                    "- Niveau de détail: concis et décisionnel.\n"
+                    "- Mettre en avant 3–5 points clés, avec chiffres essentiels uniquement.\n"
+                    "- Expliciter clairement les top contributeurs SHAP par date sans jargon inutile.\n"
+                ),
+                "analyst": (
+                    "- Niveau de détail: intermédiaire.\n"
+                    "- Pour chaque date, lister le top N positif/négatif avec valeurs SHAP et courte justification.\n"
+                    "- Ajouter des liens entre facteurs et mécanismes de transmission.\n"
+                ),
+                "economist": (
+                    "- Niveau de détail: technique et complet.\n"
+                    "- Pour chaque date, expliquer chiffre par chiffre la prévision et les contributions SHAP (valeur et signe).\n"
+                    "- Décrire les interactions, effets de base/saisonnalité et persistance attendue.\n"
+                ),
+                "general": (
+                    "- Niveau de détail: pédagogique et simplifié.\n"
+                    "- Expliquer avec des métaphores sobres, toujours en citant les chiffres saillants.\n"
+                ),
+            }[audience]
+        else: # 'en'
+            audience_instructions = {
+                "policymaker": (
+                    "- Detail level: concise and decision-oriented.\n"
+                    "- Highlight 3–5 key points with only essential figures.\n"
+                    "- Clearly list top SHAP contributors per date without unnecessary jargon.\n"
+                ),
+                "analyst": (
+                    "- Detail level: intermediate.\n"
+                    "- For each date, list top N positive/negative with SHAP values and brief justification.\n"
+                    "- Add links between factors and transmission mechanisms.\n"
+                ),
+                "economist": (
+                    "- Detail level: technical and thorough.\n"
+                    "- For each date, explain forecast numbers and SHAP contributions (value and sign).\n"
+                    "- Describe interactions, base/seasonal effects and expected persistence.\n"
+                ),
+                "general": (
+                    "- Detail level: educational and simplified.\n"
+                    "- Explain with plain language while citing salient figures.\n"
+                ),
+            }[audience]
+
+        # Sérialiser les structures complexes pour une injection propre dans le prompt
+        try:
+            shap_individuals_str = json.dumps(individual_shap_rounded, ensure_ascii=False, indent=2)
+            top_contrib_str = json.dumps(top_contrib_by_date, ensure_ascii=False, indent=2)
+        except Exception:
+            shap_individuals_str = str(individual_shap_rounded)
+            top_contrib_str = str(top_contrib_by_date)
+
+        # ==============================================================================
+        # Construction du prompt enrichi
+        # ==============================================================================
         if language == "fr":
             prompt = f"""
 Tu es l'économiste en chef de la BCEAO, spécialisé dans l'analyse de l'inflation et la politique monétaire de l'UEMOA.
-Tu dois fournir une analyse approfondie des prédictions d'inflation pour un(e) {audience_desc}.
+Tu dois fournir une analyse narrative, explicative et justifiée des prédictions d'inflation pour un(e) {audience_desc}.
 
 CONTEXTE BCEAO/UEMOA :
-- Objectif de stabilité des prix : maintenir l'inflation autour de 3% (fourchette 1-3%)
+- Objectif de stabilité des prix : maintenir l'inflation dans la fourchette 1%–3%
 - Mandat principal : assurer la stabilité monétaire dans l'Union
-- Instruments : taux directeur, réserves obligatoires, opérations d'open market
-- Défis : économies dépendantes des matières premières, taux de change fixe avec l'Euro
 {institutional_line_fr}
 
 DONNÉES DU MODÈLE D'INFLATION :
 - Prédictions d'inflation : {predictions}
 - Inflation moyenne prédite : {avg_inflation:.2f}%
 - Tendance : {trend}
-- Facteurs explicatifs SHAP : {prediction_data.global_shap_importance}
+- Importance globale des facteurs (SHAP) : {prediction_data.global_shap_importance}
 - Intervalles de confiance : {getattr(prediction_data, 'confidence_intervals', 'Non disponibles')}
-- Métadonnées du modèle : {prediction_data.shap_summary_details}
 
-STRUCTURE D'ANALYSE REQUISE :
-### RÉSUMÉ EXÉCUTIF
-- Perspectives d'inflation en 2-3 phrases clés
-- Position par rapport à la cible BCEAO
-- Message principal pour le Comité de Politique Monétaire
+### DONNÉES DE JUSTIFICATION (SHAP INDIVIDUELS)
 
-### ANALYSE DES DYNAMIQUES INFLATIONNISTES  
-- Décomposition des facteurs par ordre d'importance SHAP
-- Distinction entre inflation importée et domestique
-- Analyse des effets de base et saisonniers
+#### DONNÉES SHAP INDIVIDUELLES PAR DATE (feature: shap_value) :
+{shap_individuals_str}
 
-### PRINCIPAUX MOTEURS DE L'INFLATION
-- Top 5 des facteurs explicatifs avec impact quantifié
-- Mécanismes de transmission identifiés
-- Persistance attendue de chaque facteur
+#### TOP CONTRIBUTEURS PAR DATE (top_positive/top_negative) :
+{top_contrib_str}
 
-### ÉVALUATION DE LA STABILITÉ DES PRIX
-- Écart par rapport à l'objectif de 3%
-- Risques de dérapage inflationniste
-- Probabilité d'atteinte de la cible
+### RÈGLES ET INSTRUCTIONS
 
-{"### RECOMMANDATIONS DE POLITIQUE MONÉTAIRE" if include_monetary_analysis else ""}
-{"- Orientation du taux directeur" if include_monetary_analysis else ""}
-{"- Mesures complémentaires (réserves obligatoires, communication)" if include_monetary_analysis else ""}
-{"- Coordination avec les politiques budgétaires nationales" if include_monetary_analysis else ""}
+#### PÉRIMÈTRE ET RÈGLES (STRICT) :
+ - Zone couverte : UEMOA (Union entière). Ne pas citer de pays spécifiques.
+ - Cible BCEAO : 1%–3%. L'analyse doit systématiquement se référer à cette cible.
+ - Features AUTORISÉES à mentionner (exclusivement) : {features_present_list}
+ - **NE PAS mentionner de facteurs absents de cette liste** (ex: prix du pétrole) sauf s'ils y figurent explicitement.
+ - Toute affirmation doit être justifiée par une valeur SHAP.
 
-### RISQUES INFLATIONNISTES
-- Risques de hausse (chocs externes, tensions domestiques)
-- Risques de déflation  
-- Facteurs d'incertitude du modèle
+#### NIVEAU DE DÉTAIL (selon l'audience) :
+{audience_instructions}
 
-### CONFIANCE ET FIABILITÉ DU MODÈLE
-- Précision historique et performance
-- Limites méthodologiques
-- Scénarios alternatifs
+#### CHECKLIST LLM (OBLIGATOIRE) :
+- [ ] **Fidélité aux données** : Utiliser UNIQUEMENT les données fournies ci-dessus (ne rien inventer).
+- [ ] **Justification systématique** : Citer explicitement les valeurs SHAP (feature et valeur) pour justifier chaque affirmation sur les moteurs de l'inflation.
+- [ ] **Distinction Fait/Hypothèse** : Distinguer clairement les observations (valeurs) des hypothèses. Préfixer toute supposition par "Hypothèse:".
+- [ ] **Gestion des données manquantes** : Si une information manque, l'indiquer clairement ("Donnée manquante").
+- [ ] **Analyse par date** : Expliquer date par date (horizon par horizon) les contributions positives et négatives.
 
-### ANALYSE DES FACTEURS EXTERNES
-- Impact du taux de change EUR/FCFA
-- Influence des prix des matières premières
-- Effets des politiques monétaires internationales
+### STRUCTURE D'ANALYSE REQUISE (à suivre impérativement)
 
-Utilise un ton professionnel adapté à l'audience BCEAO. Référence l'objectif de stabilité des prix et le mandat institutionnel.
+#### RÉSUMÉ EXÉCUTIF
+- Perspectives d'inflation en 2-3 phrases clés.
+- Position par rapport à la cible BCEAO.
+- Message principal pour le Comité de Politique Monétaire.
+
+#### ANALYSE DES DYNAMIQUES INFLATIONNISTES
+- Décomposition narrative des facteurs, en se basant sur leur importance SHAP (globale et par date).
+- Discussion sur les possibles effets (saisonnalité, inertie) si les données SHAP le suggèrent.
+
+#### PRINCIPAUX MOTEURS DE L'INFLATION
+- Pour chaque date/horizon : Identifier les Top contributeurs positifs et négatifs avec leur impact SHAP quantifié (citer les valeurs).
+- Expliquer le mécanisme de transmission probable pour les 2-3 principaux facteurs.
+
+#### **JUSTIFICATION CHIFFRÉE PAR DATE (OBLIGATOIRE)**
+- Pour chaque date présente dans les prédictions :
+    1.  Rappeler la valeur de la prévision.
+    2.  Lister les contributions SHAP justifiant ce chiffre, sous la forme : "Le facteur `X` a contribué à hauteur de `valeur_shap` (poussant l'inflation à la hausse/baisse car...)".
+    3.  Fournir une mini-synthèse narrative pour cette date.
+
+#### ÉVALUATION DE LA STABILITÉ DES PRIX
+- Écart quantifié par rapport à la cible de 1-3%.
+- Analyse des risques de sortie de la fourchette-cible.
+
+{"#### RECOMMANDATIONS DE POLITIQUE MONÉTAIRE" if include_monetary_analysis else ""}
+{("- Orientation du taux directeur" if include_monetary_analysis else "")}
+{("- Mesures complémentaires" if include_monetary_analysis else "")}
+
+#### RISQUES INFLATIONNISTES
+- Risques de hausse (basés sur les facteurs SHAP positifs les plus volatils).
+- Risques de baisse/déflation (basés sur les facteurs SHAP négatifs).
+- Facteurs d'incertitude du modèle.
+
+#### CONFIANCE ET FIABILITÉ DU MODÈLE
+- Précision historique et performance (si disponible dans les métadonnées).
+- Limites méthodologiques (ex: facteurs non inclus, hypothèses linéaires).
+
+#### ANALYSE DES FACTEURS EXTERNES
+- Impact des facteurs identifiés comme "importés" dans les données SHAP (ex: `prix_mat_imp`, `taux_change_effectif`).
+- Influence des prix des matières premières (uniquement si présent dans `features_present_list`).
+
+Utilise un ton professionnel, narratif et pédagogique. L'objectif est d'expliquer le **"pourquoi"** derrière chaque chiffre.
 """
         else:
+            # Placeholder for the English prompt. A real implementation would mirror the French structure.
             prompt = f"""
 You are the Chief Economist of BCEAO, specialized in inflation analysis and monetary policy for WAEMU.
-You must provide in-depth inflation forecast analysis for a {audience_desc}.
+You must provide a narrative, explanatory, and justified analysis of inflation forecasts for a {audience_desc}.
 
 BCEAO/WAEMU CONTEXT:
-- Price stability objective: maintain inflation around 3% (1-3% range)
-- Primary mandate: ensure monetary stability in the Union
-- Instruments: policy rate, reserve requirements, open market operations
-- Challenges: commodity-dependent economies, fixed exchange rate with Euro
+- Price stability objective: maintain inflation within the 1%–3% band.
+- Primary mandate: ensure monetary stability in the Union.
 {institutional_line_en}
 
 INFLATION MODEL DATA:
 - Inflation predictions: {predictions}
 - Average predicted inflation: {avg_inflation:.2f}%
 - Trend: {trend}
-- SHAP explanatory factors: {prediction_data.global_shap_importance}
-- Confidence intervals: {getattr(prediction_data, 'confidence_intervals', 'Not available')}
-- Model metadata: {prediction_data.shap_summary_details}
+- Global SHAP factor importance: {prediction_data.global_shap_importance}
+- Confidence intervals: {getattr(prediction_data, 'confidence_intervals', 'Not Available')}
 
-REQUIRED ANALYSIS STRUCTURE:
-### EXECUTIVE SUMMARY
-- Inflation outlook in 2-3 key sentences
-- Position relative to BCEAO target
-- Main message for Monetary Policy Committee
+### JUSTIFICATION DATA (INDIVIDUAL SHAP)
 
-### INFLATION DYNAMICS ANALYSIS
-- Factor breakdown by SHAP importance order
-- Distinction between imported and domestic inflation
-- Base effects and seasonal analysis
+#### INDIVIDUAL SHAP DATA BY DATE (feature: shap_value):
+{shap_individuals_str}
 
-### KEY INFLATION DRIVERS
-- Top 5 explanatory factors with quantified impact
-- Identified transmission mechanisms
-- Expected persistence of each factor
+#### TOP CONTRIBUTORS BY DATE (top_positive/top_negative):
+{top_contrib_str}
 
-### PRICE STABILITY ASSESSMENT
-- Deviation from 3% objective
-- Inflationary derailment risks
-- Probability of target achievement
+### RULES AND INSTRUCTIONS
 
-{"### MONETARY POLICY RECOMMENDATIONS" if include_monetary_analysis else ""}
-{"- Policy rate guidance" if include_monetary_analysis else ""}
-{"- Complementary measures (reserve requirements, communication)" if include_monetary_analysis else ""}
-{"- Coordination with national fiscal policies" if include_monetary_analysis else ""}
+#### SCOPE AND RULES (STRICT):
+ - Area covered: WAEMU (entire Union). Do not mention specific countries.
+ - BCEAO Target: 1%–3%. The analysis must consistently refer to this target.
+ - ALLOWED features to mention (exclusively): {features_present_list}
+ - **DO NOT mention factors absent from this list** (e.g., oil prices) unless they are explicitly listed.
+ - Every assertion must be justified by a SHAP value.
 
-### INFLATION RISKS
-- Upside risks (external shocks, domestic tensions)
-- Deflation risks
-- Model uncertainty factors
+#### LEVEL OF DETAIL (by audience):
+{audience_instructions}
 
-### MODEL CONFIDENCE AND RELIABILITY
-- Historical accuracy and performance
-- Methodological limitations
-- Alternative scenarios
+#### LLM CHECKLIST (MANDATORY):
+- [ ] **Data Fidelity**: Use ONLY the data provided above (do not invent anything).
+- [ ] **Systematic Justification**: Explicitly cite SHAP values (feature and value) to justify every claim about inflation drivers.
+- [ ] **Fact vs. Hypothesis**: Clearly distinguish observations (values) from hypotheses. Prefix any assumption with "Assumption:".
+- [ ] **Handling Missing Data**: If information is missing, state it clearly ("Missing data").
+- [ ] **Per-Date Analysis**: Explain, date by date (horizon by horizon), the positive and negative contributions.
 
-### EXTERNAL FACTORS ANALYSIS
-- EUR/FCFA exchange rate impact
-- Commodity price influence
-- International monetary policy effects
+### REQUIRED ANALYSIS STRUCTURE (must be followed)
 
-Use a professional tone adapted to BCEAO audience. Reference price stability objective and institutional mandate.
+#### EXECUTIVE SUMMARY
+- Inflation outlook in 2-3 key sentences.
+- Position relative to the BCEAO target.
+- Main message for the Monetary Policy Committee.
+
+#### ANALYSIS OF INFLATION DYNAMICS
+- Narrative breakdown of factors, based on their SHAP importance (global and by date).
+- Discussion of possible effects (seasonality, inertia) if suggested by SHAP data.
+
+#### KEY INFLATION DRIVERS
+- For each date/horizon: Identify the Top positive and negative contributors with their quantified SHAP impact (cite the values).
+- Explain the likely transmission mechanism for the top 2-3 factors.
+
+#### **PER-DATE NUMERICAL JUSTIFICATION (MANDATORY)**
+- For each date present in the predictions:
+    1.  State the forecast value.
+    2.  List the SHAP contributions justifying this figure, in the format: "The `X` factor contributed `shap_value` (pushing inflation up/down because...)".
+    3.  Provide a brief narrative summary for that date.
+
+#### PRICE STABILITY ASSESSMENT
+- Quantified deviation from the 1-3% target.
+- Analysis of risks of exiting the target band.
+
+{"#### MONETARY POLICY RECOMMENDATIONS" if include_monetary_analysis else ""}
+{("- Policy rate guidance" if include_monetary_analysis else "")}
+{("- Complementary measures" if include_monetary_analysis else "")}
+
+#### INFLATION RISKS
+- Upside risks (based on the most volatile positive SHAP factors).
+- Downside/deflation risks (based on negative SHAP factors).
+- Model uncertainty factors.
+
+#### MODEL CONFIDENCE AND RELIABILITY
+- Historical accuracy and performance (if available in metadata).
+- Methodological limitations (e.g., excluded factors, linear assumptions).
+
+#### ANALYSIS OF EXTERNAL FACTORS
+- Impact of factors identified as "imported" in the SHAP data (e.g., `imp_mat_price`, `effective_exchange_rate`).
+- Influence of commodity prices (only if present in `features_present_list`).
+
+Use a professional, narrative, and educational tone. The goal is to explain the **"why"** behind each number.
 """
-        
+
         return prompt
 
     def _parse_inflation_interpretation(self, interpretation_text, include_policy_recs):
@@ -862,7 +1076,7 @@ Use a professional tone adapted to BCEAO audience. Reference price stability obj
         
         try:
             # Découpage par sections
-            sections = interpretation_text.split("###")
+            sections = re.split(r'####\s*', interpretation_text)
             
             for section in sections:
                 section = section.strip()
@@ -870,26 +1084,26 @@ Use a professional tone adapted to BCEAO audience. Reference price stability obj
                     continue
                     
                 # Identification des sections spécifiques à l'inflation
-                section_lower = section.lower()
+                first_line = section.split('\n')[0].strip().lower()
                 
-                if any(keyword in section_lower for keyword in ["résumé", "summary", "exécutif", "executive"]):
+                if any(keyword in first_line for keyword in ["résumé", "summary", "exécutif", "executive"]):
                     parsed["executive_summary"] = self._extract_section_content(section)
-                elif any(keyword in section_lower for keyword in ["dynamiques", "dynamics", "analyse", "analysis"]) and "inflation" in section_lower:
+                elif any(keyword in first_line for keyword in ["dynamiques", "dynamics"]) and "inflation" in first_line:
                     parsed["inflation_analysis"] = self._extract_section_content(section)
-                elif any(keyword in section_lower for keyword in ["moteurs", "drivers", "facteurs", "factors"]) and any(keyword in section_lower for keyword in ["inflation", "principaux", "key"]):
+                elif any(keyword in first_line for keyword in ["moteurs", "drivers", "principaux", "key"]):
                     parsed["key_inflation_drivers"] = self._extract_list_items(section)
-                elif any(keyword in section_lower for keyword in ["stabilité", "stability", "prix", "price"]):
+                elif any(keyword in first_line for keyword in ["stabilité", "stability", "prix", "price"]):
                     parsed["price_stability_assessment"] = self._extract_section_content(section)
-                elif any(keyword in section_lower for keyword in ["recommandations", "recommendations", "monétaire", "monetary", "politique", "policy"]):
+                elif any(keyword in first_line for keyword in ["recommandations", "recommendations", "monétaire", "monetary"]):
                     if include_policy_recs:
                         parsed["monetary_policy_recommendations"] = self._extract_section_content(section)
-                elif any(keyword in section_lower for keyword in ["risques", "risks"]) and "inflation" in section_lower:
+                elif any(keyword in first_line for keyword in ["risques", "risks"]) and "inflation" in first_line:
                     parsed["inflation_risks"] = self._extract_list_items(section)
-                elif any(keyword in section_lower for keyword in ["confiance", "confidence", "fiabilité", "reliability", "modèle", "model"]):
+                elif any(keyword in first_line for keyword in ["confiance", "confidence", "fiabilité", "reliability"]):
                     parsed["model_confidence"] = self._extract_section_content(section)
-                elif any(keyword in section_lower for keyword in ["externes", "external", "facteurs", "factors"]):
+                elif any(keyword in first_line for keyword in ["externes", "external", "facteurs", "factors"]):
                     parsed["external_factors_impact"] = self._extract_section_content(section)
-                elif any(keyword in section_lower for keyword in ["écart", "deviation", "cible", "target"]):
+                elif any(keyword in first_line for keyword in ["écart", "deviation", "cible", "target"]):
                     parsed["target_deviation_analysis"] = self._extract_section_content(section)
             
             # Si pas de recommandations demandées, on met None
@@ -914,7 +1128,8 @@ Use a professional tone adapted to BCEAO audience. Reference price stability obj
     def _extract_list_items(self, section_text):
         """Extrait les éléments d'une liste à partir d'une section."""
         items = []
-        lines = section_text.split('\n')
+        content = self._extract_section_content(section_text)
+        lines = content.split('\n')
         
         for line in lines:
             line = line.strip()
@@ -926,4 +1141,8 @@ Use a professional tone adapted to BCEAO audience. Reference price stability obj
                 if clean_item:
                     items.append(clean_item)
         
+        # Si aucun item de liste n'est trouvé, on retourne le contenu brut splitté par ligne
+        if not items and content:
+            return [l.strip() for l in content.split('\n') if l.strip()]
+
         return items
