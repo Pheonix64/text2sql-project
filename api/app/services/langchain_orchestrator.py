@@ -5,9 +5,10 @@ from logging import getLogger
 import json
 import re
 
-from langchain_community.llms import Ollama
-from langchain_community.embeddings import SentenceTransformerEmbeddings
-from langchain_community.vectorstores import Chroma
+# Imports mis à jour pour les paquets modulaires LangChain
+from langchain_ollama import Ollama
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -28,9 +29,11 @@ class LangchainOrchestrator:
     def __init__(self):
         logger.info("Initialisation de LangchainOrchestrator...")
 
+        # 1. Initialisation des composants avec les nouvelles classes
         self.llm = Ollama(model=settings.LLM_MODEL, base_url=settings.OLLAMA_BASE_URL)
-        self.embeddings = SentenceTransformerEmbeddings(model_name=settings.EMBEDDING_MODEL_NAME)
+        self.embeddings = HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL_NAME)
 
+        # 2. Connexion à la base de données PostgreSQL (inchangé)
         try:
             self.db_engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
             self.db = SQLDatabase(engine=self.db_engine)
@@ -40,10 +43,13 @@ class LangchainOrchestrator:
             logger.error(f"Erreur de connexion à la base de données : {e}")
             raise
 
+        # 3. Connexion à ChromaDB avec la nouvelle syntaxe d'initialisation
         self.chroma_client = Chroma(
-            client_settings={"host": settings.CHROMA_HOST, "port": settings.CHROMA_PORT, "ssl": False},
             collection_name=settings.CHROMA_COLLECTION,
             embedding_function=self.embeddings,
+            # Arguments `host` et `port` passés directement
+            host=settings.CHROMA_HOST,
+            port=settings.CHROMA_PORT,
         )
         self.retriever = self.chroma_client.as_retriever(search_kwargs={"k": 5})
 
@@ -60,7 +66,6 @@ class LangchainOrchestrator:
     def _build_chains(self):
         """Construit les chaînes LCEL pour les différentes tâches."""
 
-        # --- Chaîne de génération SQL ---
         sql_generation_template = """
 ### Instruction (génération SQL)
 Tu es un expert SQL (PostgreSQL) et analyste de l'UEMOA. Convertis la question en une seule requête SQL SELECT.
@@ -89,7 +94,6 @@ Contraintes:
             | StrOutputParser()
         )
 
-        # --- Chaîne de génération de réponse finale ---
         final_response_template = """
 ### Instruction (rédaction d'analyse augmentée)
 Tu es un analyste économique de la BCEAO. En te basant sur la QUESTION et le RÉSULTAT SQL, rédige une analyse en français.
@@ -183,12 +187,9 @@ Analyse:
             "individual_shap": json.dumps(body.prediction_data.individual_shap_explanations, indent=2, default=str)
         })
 
-        # Le parsing de la réponse reste une logique métier simple
         return self._parse_inflation_interpretation(interpretation_text)
 
     def _parse_inflation_interpretation(self, text: str) -> dict:
-        """Parse la sortie texte du LLM en une structure JSON (logique simplifiée)."""
-        # Une implémentation plus robuste utiliserait PydanticOutputParser de LangChain
         return {"executive_summary": text[:1000], "full_analysis": text}
 
     def index_reference_queries(self, queries: list[str] | None = None) -> int:

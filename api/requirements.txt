@@ -11,19 +11,21 @@ psycopg2-binary
 sqlalchemy
 
 # Base de données vectorielle
-chromadb
+# Utilisation du paquet modulaire pour Chroma
+langchain-chroma
 
-# LLM
-ollama
+# LLM et Embeddings
+# Paquets modulaires pour les intégrations LangChain
 langchain
-langchain-community
 langchain-core
-langchain-postgres
+langchain-community # Pour les utilitaires comme SQLDatabase
+langchain-ollama
+langchain-huggingface
 
 # Sécurité et validation SQL
 sqlglot
 
-# Embeddings pour la recherche sémantique
+# Embeddings (dépendance sous-jacente pour langchain-huggingface)
 sentence-transformers
 
 # Gestion de la configuration
