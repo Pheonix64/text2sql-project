@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.routers import conversation
 from app.routers import forecast
-from app.services.query_orchestrator import QueryOrchestrator
+from app.services.langchain_orchestrator import LangchainOrchestrator
 import logging
 
 # Configuration de la journalisation
@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     """
     logging.info("Démarrage de l'application...")
     # Instanciation tardive pour garantir que les services dépendants sont prêts
-    app.state.orchestrator = QueryOrchestrator()
+    app.state.orchestrator = LangchainOrchestrator()
     # Indexation initiale des requêtes de référence
     app.state.orchestrator.index_reference_queries()
     yield

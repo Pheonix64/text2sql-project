@@ -15,6 +15,10 @@ chromadb
 
 # LLM
 ollama
+langchain
+langchain-community
+langchain-core
+langchain-postgres
 
 # Sécurité et validation SQL
 sqlglot
