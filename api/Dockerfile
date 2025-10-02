@@ -25,7 +25,7 @@ RUN \
     pip install --no-cache-dir --user --upgrade pip && \
     # 2. Installer torch en version CPU depuis sa source officielle
     pip install --no-cache-dir --user --timeout=600 \
-        torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+        torch --index-url https://download.pytorch.org/whl/cpu && \
     # 3. Installer le reste des paquets, y compris sentence-transformers
     pip install --no-cache-dir --user --timeout=600 \
         sentence-transformers \
