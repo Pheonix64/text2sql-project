@@ -60,6 +60,7 @@ class ForecastNarrativeRequest(BaseModel):
     tone: Literal["professionnel", "neutre", "pédagogique"] = "professionnel"
     title: Optional[str] = None
 
+
 class ForecastNarrativeResponse(BaseModel):
     narrative: str
     summary_stats: SummaryStats
