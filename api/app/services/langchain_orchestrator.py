@@ -16,7 +16,7 @@ import sqlglot
 from sqlalchemy import create_engine, exc, text
 
 from app.config import settings
-from app.models.schemas import InflationInterpretationRequest, NarrativeRequest
+from app.models.schemas import InflationInterpretationRequest, ForecastNarrativeRequest
 
 logger = getLogger(__name__)
 
@@ -122,7 +122,7 @@ Règles: Si le résultat est vide, dis-le. N'invente rien.
         final_answer = await self.final_response_chain.ainvoke({"question": user_question, "sql_result": sql_result})
         return {"answer": final_answer, "generated_sql": generated_sql, "sql_result": sql_result}
 
-    async def generate_forecast_narrative(self, body: NarrativeRequest) -> tuple[str, dict]:
+    async def generate_forecast_narrative(self, body: ForecastNarrativeRequest) -> tuple[str, dict]:
         """Génère une narration pour des prévisions en utilisant un LLM via LangChain."""
         values = [p.value for p in body.series]
         stats = {"count": len(values), "min": min(values) if values else 0, "max": max(values) if values else 0}
