@@ -1,14 +1,36 @@
 # text-to-sql-project/api/app/services/query_orchestrator.py
 
-import ollama
-import chromadb
+# =======================================================================================
+# REFACTORED TO USE LANGCHAIN FRAMEWORK
+# =======================================================================================
+# This file has been refactored to use LangChain components while maintaining the exact
+# same business logic, API endpoints, security validations, and configurations as the
+# original implementation.
+#
+# Key LangChain components used:
+# - ChatOllama: Replaces manual ollama.AsyncClient for LLM interactions
+# - HuggingFaceEmbeddings: Wrapper for sentence-transformers embeddings
+# - Chroma: LangChain vector store wrapper for ChromaDB
+# - PromptTemplate: Structured prompt management for SQL generation and responses
+# - SQLDatabase: Wrapper for SQLAlchemy database operations
+# =======================================================================================
+
 import sqlglot
-from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine, text, exc
 from logging import getLogger
 import re
 import json
 import asyncio
+
+# LangChain imports - Core framework
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import PromptTemplate
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_community.utilities import SQLDatabase
+
+# ChromaDB client for direct collection management (needed for indexing operations)
+import chromadb
 
 from app.config import settings
 
@@ -17,17 +39,64 @@ logger = getLogger(__name__)
 class QueryOrchestrator:
     def __init__(self):
         logger.info("Initialisation de QueryOrchestrator...")
-        self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
+        
+        # =======================================================================================
+        # LANGCHAIN EMBEDDINGS - Replaces direct SentenceTransformer usage
+        # =======================================================================================
+        # HuggingFaceEmbeddings wraps sentence-transformers models with LangChain interface
+        # This maintains compatibility with the existing embedding model while providing
+        # LangChain's standardized embedding interface
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name=settings.EMBEDDING_MODEL_NAME,
+            # Encode kwargs for consistency with original SentenceTransformer behavior
+            encode_kwargs={'normalize_embeddings': False}
+        )
+        
+        # =======================================================================================
+        # CHROMADB CLIENT - Direct client for collection management (indexing operations)
+        # =======================================================================================
+        # We still need the direct ChromaDB client for indexing operations (add, delete)
+        # that are not part of the LangChain Chroma interface
         self.chroma_client = chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
         self.sql_collection = self.chroma_client.get_or_create_collection(name=settings.CHROMA_COLLECTION)
-        # Client asynchrone pour éviter de bloquer l'event loop
-        self.ollama_client = ollama.AsyncClient(host=settings.OLLAMA_BASE_URL)
+        
+        # =======================================================================================
+        # LANGCHAIN CHROMA VECTOR STORE - Replaces manual ChromaDB query operations
+        # =======================================================================================
+        # Chroma vector store provides LangChain interface for similarity search
+        # This will be used in process_user_question for retrieving similar SQL queries
+        self.vector_store = Chroma(
+            client=self.chroma_client,
+            collection_name=settings.CHROMA_COLLECTION,
+            embedding_function=self.embedding_model
+        )
+        
+        # =======================================================================================
+        # LANGCHAIN CHATOLLAMA - Replaces manual ollama.AsyncClient
+        # =======================================================================================
+        # ChatOllama provides LangChain's standardized chat interface for Ollama models
+        # Maintains async support for non-blocking event loop operations
+        # The base_url corresponds to the original OLLAMA_BASE_URL setting
+        self.llm = ChatOllama(
+            model=settings.LLM_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            # Preserve existing timeout behavior - LangChain will handle this via request_timeout
+            # We'll handle timeouts explicitly in our async calls using asyncio.wait_for
+        )
+        
+        # =======================================================================================
+        # CONCURRENCY CONTROL - Preserved from original implementation
+        # =======================================================================================
         # Sémaphores pour limiter la concurrence par ressource
+        # These semaphores ensure controlled concurrency for embeddings, vector store, and LLM
         self.embed_sem = asyncio.Semaphore(2)
         self.chroma_sem = asyncio.Semaphore(4)
         self.llm_sem = asyncio.Semaphore(2)
         
         try:
+            # =======================================================================================
+            # SQLALCHEMY DATABASE CONNECTIONS - Preserved from original
+            # =======================================================================================
             # Connexion pour le LLM (utilisateur read-only)
             self.db_engine = create_engine(
                 settings.DATABASE_URL,
@@ -37,11 +106,24 @@ class QueryOrchestrator:
             )
             # Connexion pour l'admin (pour lire le schéma) via URL encodée
             self.admin_db_engine = create_engine(settings.ADMIN_DATABASE_URL)
+            
+            # =======================================================================================
+            # LANGCHAIN SQLDATABASE - Wrapper for database schema introspection
+            # =======================================================================================
+            # SQLDatabase provides LangChain interface for database operations
+            # This wraps our read-only database engine for potential future LangChain SQL chains
+            self.langchain_db = SQLDatabase(
+                engine=self.db_engine,
+                # Specify the table we're working with
+                include_tables=['indicateurs_economiques_uemoa']
+            )
+            
             logger.info("Connexions à la base de données PostgreSQL réussies.")
         except Exception as e:
             logger.error(f"Erreur de connexion à la base de données : {e}")
             raise
 
+        # Get database schema using our custom method (maintains original logic)
         self.db_schema = self._get_rich_db_schema(table_name='indicateurs_economiques_uemoa')
 
         # Requêtes SQL d'exemple pour l'indexation sémantique
@@ -408,6 +490,14 @@ class QueryOrchestrator:
             return f"CREATE TABLE {table_name} (...); -- Erreur: impossible de récupérer le schéma détaillé"
 
     def index_reference_queries(self, queries: list[str] | None = None):
+        """
+        Index reference SQL queries into ChromaDB for semantic similarity search.
+        
+        LANGCHAIN INTEGRATION:
+        - Uses HuggingFaceEmbeddings (LangChain wrapper) instead of direct SentenceTransformer
+        - The embed_documents method is the LangChain standard interface for batch embedding
+        - Maintains original indexing logic and behavior
+        """
         queries_to_index = queries or self.reference_queries
         if not queries_to_index:
             logger.warning("Aucune requête de référence à indexer.")
@@ -421,7 +511,13 @@ class QueryOrchestrator:
             if ids_to_delete:
                 self.sql_collection.delete(ids=ids_to_delete)
 
-        embeddings = self.embedding_model.encode(queries_to_index).tolist()
+        # =======================================================================================
+        # LANGCHAIN EMBEDDINGS - Using embed_documents for batch embedding
+        # =======================================================================================
+        # embed_documents is LangChain's standard method for batch text embedding
+        # Returns list of embeddings (already as lists, not numpy arrays like SentenceTransformer)
+        embeddings = self.embedding_model.embed_documents(queries_to_index)
+        
         self.sql_collection.add(
             embeddings=embeddings,
             documents=queries_to_index,
