@@ -31,6 +31,8 @@ from langchain_community.utilities import SQLDatabase
 
 # ChromaDB client for direct collection management (needed for indexing operations)
 import chromadb
+# Direct Ollama client for model pulling (ChatOllama doesn't expose pull method)
+import ollama
 
 from app.config import settings
 
@@ -83,6 +85,13 @@ class QueryOrchestrator:
             # Preserve existing timeout behavior - LangChain will handle this via request_timeout
             # We'll handle timeouts explicitly in our async calls using asyncio.wait_for
         )
+        
+        # =======================================================================================
+        # DIRECT OLLAMA CLIENT - For model pulling only
+        # =======================================================================================
+        # ChatOllama doesn't expose the pull method, so we need direct ollama.AsyncClient
+        # This is only used in pull_model() for downloading models
+        self.ollama_client = ollama.AsyncClient(host=settings.OLLAMA_BASE_URL)
         
         # =======================================================================================
         # CONCURRENCY CONTROL - Preserved from original implementation
@@ -405,14 +414,18 @@ class QueryOrchestrator:
             )
 
 
+        # =======================================================================================
+        # LANGCHAIN CHATOLLAMA - Forecast narrative generation
+        # =======================================================================================
         # 4) Appel LLM avec limites et timeouts
         try:
             async with self.llm_sem:
                 res = await asyncio.wait_for(
-                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=prompt),
+                    self.llm.ainvoke(prompt),
                     timeout=90,
                 )
-            narrative = res.get("response", "").strip()
+            # Extract content from AIMessage
+            narrative = res.content.strip()
         except Exception as e:
             logger.error(f"Erreur LLM lors de la narration de prévision: {e}")
             narrative = "Désolé, une erreur est survenue lors de la génération de la narration."
@@ -582,62 +595,79 @@ class QueryOrchestrator:
                 )
             }
 
-        async with self.embed_sem:
-            question_embedding_arr = await asyncio.to_thread(self.embedding_model.encode, user_question)
-        question_embedding = question_embedding_arr.tolist()
+        # =======================================================================================
+        # LANGCHAIN SIMILARITY SEARCH - Replaces manual embedding + ChromaDB query
+        # =======================================================================================
+        # Using Chroma's similarity_search to retrieve similar SQL examples
+        # This replaces: embed_query → tolist → sql_collection.query
         async with self.chroma_sem:
-            results = await asyncio.to_thread(
-                self.sql_collection.query,
-                query_embeddings=[question_embedding],
-                n_results=5,
+            similar_docs = await asyncio.to_thread(
+                self.vector_store.similarity_search,
+                user_question,
+                k=5
             )
-        # ChromaDB renvoie une liste de listes de documents (par requête)
-        documents = results.get('documents') or []
-        if documents and isinstance(documents[0], list):
-            flat_docs = [doc for sub in documents for doc in sub]
-        else:
-            flat_docs = documents
-        context_queries = "\n".join(flat_docs) if flat_docs else ""
+        
+        # Extract document content (page_content is LangChain's standard attribute)
+        context_queries = "\n".join([doc.page_content for doc in similar_docs]) if similar_docs else ""
 
-        sql_generation_prompt = f"""
-            ### Instruction (génération SQL)
-            Tu es un expert SQL (PostgreSQL) et analyste économique spécialisé en politique monétaire de l'UEMOA.  
-            Ton objectif : convertir la question de l'utilisateur en **UNE SEULE** requête SQL **SELECT** (ou une requête WITH ... SELECT) basée strictement sur le schéma et les descriptions fournis.
+        # =======================================================================================
+        # LANGCHAIN PROMPTTEMPLATE - Structured SQL generation prompt
+        # =======================================================================================
+        # PromptTemplate provides a structured way to manage prompts with variables
+        # This replaces manual f-string formatting for better maintainability
+        sql_generation_template = PromptTemplate(
+            input_variables=["db_schema", "context_queries", "user_question"],
+            template="""### Instruction (génération SQL)
+Tu es un expert SQL (PostgreSQL) et analyste économique spécialisé en politique monétaire de l'UEMOA.  
+Ton objectif : convertir la question de l'utilisateur en **UNE SEULE** requête SQL **SELECT** (ou une requête WITH ... SELECT) basée strictement sur le schéma et les descriptions fournis.
 
-            Contraintes strictes :
-            - **Toutes les données de la base concernent par défaut l'ensemble de l'Union (BCEAO)** et non un pays spécifique. 
-            → Ne filtre un pays particulier **que si la colonne `country` (ou équivalent) est explicitement utilisée dans la question**.
-            - **Retourne UNIQUEMENT la requête SQL**, sans texte additionnel, sans explication, sans Markdown, sans commentaires, sans backticks. La sortie doit commencer par `SELECT` ou `WITH` et se terminer par un point-virgule (`;`).
-            - **Ne génère jamais** de requêtes de modification (INSERT, UPDATE, DELETE, DROP, etc.).
-            - Préfère les fonctions temporelles PostgreSQL (ex. `DATE_TRUNC`) pour les agrégations sur date.
-            - Utilise des agrégations appropriées (`AVG`, `SUM`, `COUNT`, `MAX`, `MIN`) quand la question demande des synthèses.
-            - **N'invente pas** de colonnes, tables ou valeurs : n'utilise que les tables/colonnes du schéma donné.
-            - Si la question demande une liste non agrégée potentiellement volumineuse, **limite la sortie à 1000 lignes** et ajoute un `ORDER BY` pertinent.
-            - Si la question demande une comparaison (périodes, zones, entités), inclure clairement la clause `GROUP BY` nécessaire.
-            - Si l'intention de la question est ambiguë (ex. période non précisée), choisir une hypothèse raisonnable basée sur les colonnes dates du schéma (sans commentaire dans la sortie).
-            - Utilise des alias clairs pour les champs agrégés (ex. `AS avg_inflation`).
+Contraintes strictes :
+- **Toutes les données de la base concernent par défaut l'ensemble de l'Union (BCEAO)** et non un pays spécifique. 
+→ Ne filtre un pays particulier **que si la colonne `country` (ou équivalent) est explicitement utilisée dans la question**.
+- **Retourne UNIQUEMENT la requête SQL**, sans texte additionnel, sans explication, sans Markdown, sans commentaires, sans backticks. La sortie doit commencer par `SELECT` ou `WITH` et se terminer par un point-virgule (`;`).
+- **Ne génère jamais** de requêtes de modification (INSERT, UPDATE, DELETE, DROP, etc.).
+- Préfère les fonctions temporelles PostgreSQL (ex. `DATE_TRUNC`) pour les agrégations sur date.
+- Utilise des agrégations appropriées (`AVG`, `SUM`, `COUNT`, `MAX`, `MIN`) quand la question demande des synthèses.
+- **N'invente pas** de colonnes, tables ou valeurs : n'utilise que les tables/colonnes du schéma donné.
+- Si la question demande une liste non agrégée potentiellement volumineuse, **limite la sortie à 1000 lignes** et ajoute un `ORDER BY` pertinent.
+- Si la question demande une comparaison (périodes, zones, entités), inclure clairement la clause `GROUP BY` nécessaire.
+- Si l'intention de la question est ambiguë (ex. période non précisée), choisir une hypothèse raisonnable basée sur les colonnes dates du schéma (sans commentaire dans la sortie).
+- Utilise des alias clairs pour les champs agrégés (ex. `AS avg_inflation`).
 
-            ### Schéma et descriptions
-            {self.db_schema}
+### Schéma et descriptions
+{db_schema}
 
-            ### Exemples de requêtes similaires
-            {context_queries}
+### Exemples de requêtes similaires
+{context_queries}
 
-            ### Question de l'utilisateur
-            "{user_question}"
+### Question de l'utilisateur
+"{user_question}"
 
-            ### Requête SQL
-            """
+### Requête SQL
+"""
+        )
+        
+        sql_generation_prompt = sql_generation_template.format(
+            db_schema=self.db_schema,
+            context_queries=context_queries,
+            user_question=user_question
+        )
 
 
 
+        # =======================================================================================
+        # LANGCHAIN CHATOLLAMA - Async LLM invocation with semaphore control
+        # =======================================================================================
+        # ainvoke is LangChain's async interface for chat models
+        # Replaces: ollama_client.generate with standardized LangChain interface
         try:
             async with self.llm_sem:
                 response = await asyncio.wait_for(
-                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt),
+                    self.llm.ainvoke(sql_generation_prompt),
                     timeout=90,
                 )
-            generated_sql = self._extract_sql_from_text(response['response'])
+            # ChatOllama returns AIMessage, extract content
+            generated_sql = self._extract_sql_from_text(response.content)
         except Exception as e:
             msg = str(e).lower()
             # Si le modèle n'est pas trouvé (404), tenter un pull puis retenter une fois
@@ -648,10 +678,10 @@ class QueryOrchestrator:
                     try:
                         async with self.llm_sem:
                             response = await asyncio.wait_for(
-                                self.ollama_client.generate(model=settings.LLM_MODEL, prompt=sql_generation_prompt),
+                                self.llm.ainvoke(sql_generation_prompt),
                                 timeout=90,
                             )
-                        generated_sql = self._extract_sql_from_text(response['response'])
+                        generated_sql = self._extract_sql_from_text(response.content)
                     except Exception as e2:
                         logger.error(f"Échec de la génération après pull du modèle: {e2}")
                         return {"answer": "Désolé, échec de la génération SQL même après téléchargement du modèle."}
@@ -726,10 +756,11 @@ class QueryOrchestrator:
         try:
             async with self.llm_sem:
                 final_response = await asyncio.wait_for(
-                    self.ollama_client.generate(model=settings.LLM_MODEL, prompt=natural_language_prompt),
+                    self.llm.ainvoke(natural_language_prompt),
                     timeout=90,
                 )
-            final_answer = final_response['response']
+            # Extract content from AIMessage
+            final_answer = final_response.content
         except Exception as e:
             logger.error(f"Erreur lors de la génération de la réponse finale par Ollama : {e}")
             return {"answer": "Désolé, une erreur est survenue lors de la formulation de la réponse finale."}
@@ -806,17 +837,18 @@ class QueryOrchestrator:
                 prediction_data, language, audience, include_monetary_analysis, focus_bceao
             )
             
+            # =======================================================================================
+            # LANGCHAIN CHATOLLAMA - Inflation interpretation generation
+            # =======================================================================================
             # Génération de l'interprétation via LLM
             async with self.llm_sem:
                 response = await asyncio.wait_for(
-                    self.ollama_client.generate(
-                        model=settings.LLM_MODEL,
-                        prompt=interpretation_prompt
-                    ),
+                    self.llm.ainvoke(interpretation_prompt),
                     timeout=120
                 )
             
-            interpretation_text = response.get("response", "").strip()
+            # Extract content from AIMessage
+            interpretation_text = response.content.strip()
             
             # Parsing et structuration de la réponse spécifique à l'inflation
             structured_interpretation = self._parse_inflation_interpretation(
