@@ -16,6 +16,12 @@ chromadb
 # LLM
 ollama
 
+# LangChain - Core framework and integrations
+langchain>=0.3.27
+langchain-community>=0.3.27
+langchain-chroma>=0.1.4
+langchain-ollama>=0.2.2
+
 # Sécurité et validation SQL
 sqlglot
 
