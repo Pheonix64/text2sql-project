@@ -240,7 +240,6 @@ class QueryOrchestrator:
                 {sql_result_str}
 
                 ### date actuelle
-                {current_date}
                 ### Réponse
                 """
                         )
@@ -262,7 +261,7 @@ class QueryOrchestrator:
         async def _run_response_generation(inputs: Dict[str, Any]) -> Dict[str, Any]:
             generated_sql = inputs.get("generated_sql", "")
             user_question = inputs.get("user_question", "")
-            current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            #current_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
             # validate
             if not generated_sql or not re.search(r"^\s*(SELECT|WITH)\b", generated_sql, flags=re.IGNORECASE):
@@ -277,8 +276,7 @@ class QueryOrchestrator:
             # NL prompt
             nl_prompt = self.natural_language_template.format(
                 user_question=user_question,
-                sql_result_str=sql_result_str,
-                current_date=current_date
+                sql_result_str=sql_result_str
             )
             final_text = await self._call_llm(nl_prompt)
             return {"final_answer": final_text, "sql_result": sql_result}
