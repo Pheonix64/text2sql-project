@@ -1,0 +1,179 @@
+[
+  {
+    "question": "Quel est le taux d'inflation moyen de l'UEMOA en 2020 ?",
+    "sql": "SELECT AVG(taux_inflation_moyen_annuel_ipc_pct) AS avg_inflation FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2020-01-01' AND '2020-12-31';"
+  },
+  {
+    "question": "Quel était le PIB nominal de l'UEMOA en 2021 ?",
+    "sql": "SELECT pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE date = '2021-01-01';"
+  },
+  {
+    "question": "Quel est le poids du secteur primaire dans le PIB pour 2019 ?",
+    "sql": "SELECT poids_secteur_primaire_pct FROM indicateurs_economiques_uemoa WHERE date = '2019-01-01';"
+  },
+  {
+    "question": "Quelle a été la contribution du secteur secondaire à la croissance du PIB en 2022 ?",
+    "sql": "SELECT contribution_croissance_secondaire FROM indicateurs_economiques_uemoa WHERE date = '2022-01-01';"
+  },
+  {
+    "question": "Quel était le taux de croissance réel du PIB en 2020 ?",
+    "sql": "SELECT taux_croissance_reel_pib_pct FROM indicateurs_economiques_uemoa WHERE date = '2020-01-01';"
+  },
+  {
+    "question": "Quel est le montant total des recettes fiscales de l'UEMOA en 2021 ?",
+    "sql": "SELECT recettes_fiscales FROM indicateurs_economiques_uemoa WHERE date = '2021-01-01';"
+  },
+  {
+    "question": "Quel a été le solde budgétaire global avec dons en 2019 ?",
+    "sql": "SELECT solde_budgetaire_global_avec_dons FROM indicateurs_economiques_uemoa WHERE date = '2019-01-01';"
+  },
+  {
+    "question": "Quelle est la valeur des exportations de biens FOB en 2022 ?",
+    "sql": "SELECT exportations_biens_fob FROM indicateurs_economiques_uemoa WHERE date = '2022-01-01';"
+  },
+  {
+    "question": "Quel est l'encours de la dette publique en pourcentage du PIB en 2020 ?",
+    "sql": "SELECT encours_de_la_dette_pct_pib FROM indicateurs_economiques_uemoa WHERE date = '2020-01-01';"
+  },
+  {
+    "question": "Quel était le solde commercial des biens en 2021 ?",
+    "sql": "SELECT balance_des_biens FROM indicateurs_economiques_uemoa WHERE date = '2021-01-01';"
+  },
+  {
+    "question": "Quel est le taux d'inflation moyen de l'UEMOA entre 2018 et 2022 ?",
+    "sql": "SELECT AVG(taux_inflation_moyen_annuel_ipc_pct) AS avg_inflation_2018_2022 FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2018-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quelle année a eu la croissance réelle du PIB la plus élevée entre 2015 et 2022 ?",
+    "sql": "SELECT date, taux_croissance_reel_pib_pct FROM indicateurs_economiques_uemoa WHERE taux_croissance_reel_pib_pct = (SELECT MAX(taux_croissance_reel_pib_pct) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel secteur a contribué le plus à la croissance du PIB en moyenne entre 2019 et 2021 ?",
+    "sql": "SELECT 'Primaire' AS secteur, AVG(contribution_croissance_primaire) AS moyenne_contribution FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2019-01-01' AND '2021-12-31' UNION ALL SELECT 'Secondaire', AVG(contribution_croissance_secondaire) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2019-01-01' AND '2021-12-31' UNION ALL SELECT 'Tertiaire', AVG(contribution_croissance_tertiaire) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2019-01-01' AND '2021-12-31' ORDER BY moyenne_contribution DESC LIMIT 1;"
+  },
+  {
+    "question": "Quelle est la moyenne des recettes fiscales par rapport au PIB entre 2017 et 2022 ?",
+    "sql": "SELECT AVG(recettes_fiscales_pct_pib) AS avg_recettes_pct_pib FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2017-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quel est le ratio moyen exportations/importations entre 2015 et 2022 et quelle année a été la plus déficitaire ?",
+    "sql": "SELECT AVG(exportations_biens_fob/importations_biens_fob) AS ratio_moyen, date FROM indicateurs_economiques_uemoa WHERE (exportations_biens_fob - importations_biens_fob) = (SELECT MIN(exportations_biens_fob - importations_biens_fob) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel est le solde budgétaire global moyen hors dons entre 2018 et 2022 et quelle année a été excédentaire ?",
+    "sql": "SELECT AVG(solde_budgetaire_global_hors_dons) AS solde_moyen, date FROM indicateurs_economiques_uemoa WHERE solde_budgetaire_global_hors_dons > 0 AND date BETWEEN '2018-01-01' AND '2022-12-31' ORDER BY solde_budgetaire_global_hors_dons DESC LIMIT 1;"
+  },
+  {
+    "question": "Comment a évolué la masse monétaire M2 entre 2015 et 2022, et quelle année a eu la plus forte augmentation ?",
+    "sql": "SELECT date, agregats_monnaie_masse_monetaire_m2, agregats_monnaie_masse_monetaire_m2 - LAG(agregats_monnaie_masse_monetaire_m2) OVER (ORDER BY date) AS variation FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31' ORDER BY variation DESC LIMIT 1;"
+  },
+  {
+    "question": "Quel est le taux moyen d'ouverture économique (degré d'ouverture) entre 2015 et 2022 et quelle année était la plus ouverte ?",
+    "sql": "SELECT AVG(degre_ouverture_pct) AS ouverture_moyenne, date FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31' ORDER BY degre_ouverture_pct DESC LIMIT 1;"
+  },
+  {
+    "question": "Quel est le taux d'inflation moyen de l'UEMOA entre 2015 et 2022 ?",
+    "sql": "SELECT AVG(taux_inflation_moyen_annuel_ipc_pct) AS avg_inflation_2015_2022 FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quelle année a connu la plus forte croissance réelle du PIB entre 2015 et 2022 ?",
+    "sql": "SELECT date, taux_croissance_reel_pib_pct FROM indicateurs_economiques_uemoa WHERE taux_croissance_reel_pib_pct = (SELECT MAX(taux_croissance_reel_pib_pct) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel secteur a contribué le plus à la croissance du PIB en moyenne sur la période 2018-2022 ?",
+    "sql": "WITH moyennes_par_secteur AS (SELECT AVG(contribution_croissance_primaire) as primaire, AVG(contribution_croissance_secondaire) as secondaire,  AVG(contribution_croissance_tertiaire) as tertiaire FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2018-01-01' AND '2022-12-31') SELECT 'Tertiaire' AS secteur, tertiaire AS moyenne_contribution FROM moyennes_par_secteur UNION ALL SELECT 'Secondaire', secondaire FROM moyennes_par_secteur UNION ALL SELECT 'Primaire', primaire FROM moyennes_par_secteur ORDER BY moyenne_contribution DESC LIMIT 1;"
+  },
+  {
+    "question": "Quelle est la moyenne des recettes fiscales en pourcentage du PIB entre 2017 et 2022 ?",
+    "sql": "SELECT AVG(recettes_fiscales_pct_pib) AS avg_recettes_pct_pib FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2017-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quel est le ratio moyen exportations/importations et l'année la plus déficitaire sur la période 2015-2022 ?",
+    "sql": "SELECT AVG(exportations_biens_fob/importations_biens_fob) AS ratio_moyen, date FROM indicateurs_economiques_uemoa WHERE (exportations_biens_fob - importations_biens_fob) = (SELECT MIN(exportations_biens_fob - importations_biens_fob) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel est le solde budgétaire global moyen hors dons entre 2018 et 2022 et quelle année était excédentaire ?",
+    "sql": "SELECT AVG(solde_budgetaire_global_hors_dons) AS solde_moyen, date FROM indicateurs_economiques_uemoa WHERE solde_budgetaire_global_hors_dons > 0 AND date BETWEEN '2018-01-01' AND '2022-12-31' ORDER BY solde_budgetaire_global_hors_dons DESC LIMIT 1;"
+  },
+  {
+    "question": "Comment la masse monétaire M2 a-t-elle évolué entre 2015 et 2022 et quelle année a eu la plus forte augmentation annuelle ?",
+    "sql": "SELECT date, agregats_monnaie_masse_monetaire_m2, agregats_monnaie_masse_monetaire_m2 - LAG(agregats_monnaie_masse_monetaire_m2) OVER (ORDER BY date) AS variation FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31' ORDER BY variation DESC LIMIT 1;"
+  },
+  {
+    "question": "Quel est le taux moyen d'ouverture économique sur 2015-2022 et quelle année était la plus ouverte ?",
+    "sql": "SELECT AVG(degre_ouverture_pct) AS ouverture_moyenne, date FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31' ORDER BY degre_ouverture_pct DESC LIMIT 1;"
+  },
+  {
+    "question": "Quel est le montant moyen de l'épargne intérieure totale et son pourcentage moyen par rapport au PIB entre 2018 et 2022 ?",
+    "sql": "SELECT AVG(epargne_interieure_milliards_fcfa) AS epargne_moyenne, AVG(taux_epargne_interieure_pct) AS taux_moyen FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2018-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quelle a été l'année avec le plus fort investissement public en pourcentage du PIB sur la période 2015-2022 ?",
+    "sql": "SELECT date, taux_investissement_public_pct FROM indicateurs_economiques_uemoa WHERE taux_investissement_public_pct = (SELECT MAX(taux_investissement_public_pct) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel est le solde primaire moyen basé sur les recettes fiscales entre 2017 et 2022 ?",
+    "sql": "SELECT AVG(solde_primaire_base_sur_recettes_fiscales_pct) AS solde_primaire_moyen FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2017-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quelle année a enregistré le plus faible encours de la dette publique en pourcentage du PIB sur 2015-2022 ?",
+    "sql": "SELECT date, encours_de_la_dette_pct_pib FROM indicateurs_economiques_uemoa WHERE encours_de_la_dette_pct_pib = (SELECT MIN(encours_de_la_dette_pct_pib) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quelle a été l'année avec le plus fort solde commercial des biens (export - import) entre 2015 et 2022 ?",
+    "sql": "SELECT date, balance_des_biens FROM indicateurs_economiques_uemoa WHERE balance_des_biens = (SELECT MAX(balance_des_biens) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quelle année a connu la plus forte augmentation des recettes totales hors dons sur 2015-2022 ?",
+    "sql": "SELECT date, recettes_totales_hors_dons FROM indicateurs_economiques_uemoa WHERE recettes_totales_hors_dons - LAG(recettes_totales_hors_dons) OVER (ORDER BY date) = (SELECT MAX(recettes_totales_hors_dons - LAG(recettes_totales_hors_dons) OVER (ORDER BY date)) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel a été le financement exceptionnel moyen sur la période 2015-2022 ?",
+    "sql": "SELECT AVG(financement_exceptionnel) AS financement_exceptionnel_moyen FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quel est le ratio moyen actifs extérieurs nets sur masse monétaire entre 2015 et 2022 ?",
+    "sql": "SELECT AVG(actifs_exterieurs_nets_bceao_avoirs_officiels / agregats_monnaie_masse_monetaire_m2) AS ratio_actifs_m2 FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31';"
+  },
+  {
+    "question": "Quelle année a eu le plus fort service de la dette en intérêts sur la période 2015-2022 ?",
+    "sql": "SELECT date, service_de_la_dette_interets FROM indicateurs_economiques_uemoa WHERE service_de_la_dette_interets = (SELECT MAX(service_de_la_dette_interets) FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31');"
+  },
+  {
+    "question": "Quel est le taux d'inflation moyen de l'UEMOA entre 2015 et 2022, et quelle serait la valeur prévisionnelle pour 2023 basée sur la tendance ?",
+    "sql": "WITH historique AS (SELECT date, taux_inflation_moyen_annuel_ipc_pct FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31') SELECT AVG(taux_inflation_moyen_annuel_ipc_pct) AS avg_inflation, (SELECT taux_inflation_moyen_annuel_ipc_pct + (taux_inflation_moyen_annuel_ipc_pct - LAG(taux_inflation_moyen_annuel_ipc_pct) OVER (ORDER BY date)) FROM historique ORDER BY date DESC LIMIT 1) AS forecast_2023 FROM historique;"
+  },
+  {
+    "question": "Quelle a été la croissance réelle du PIB maximale et quelle serait la prévision pour 2023 en utilisant la moyenne de croissance annuelle ?",
+    "sql": "WITH croissance AS (SELECT date, taux_croissance_reel_pib_pct FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31') SELECT MAX(taux_croissance_reel_pib_pct) AS max_croissance, AVG(taux_croissance_reel_pib_pct) AS forecast_2023 FROM croissance;"
+  },
+  {
+    "question": "Quel secteur a contribué le plus à la croissance du PIB sur 2018-2022, et quelle contribution pourrait-on attendre pour 2023 si la tendance se poursuit ?",
+    "sql": "WITH secteur AS (SELECT date, contribution_croissance_primaire, contribution_croissance_secondaire, contribution_croissance_tertiaire FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2018-01-01' AND '2022-12-31') SELECT 'Primaire' AS secteur, AVG(contribution_croissance_primaire) AS avg_contribution, AVG(contribution_croissance_primaire) AS forecast_2023 FROM secteur UNION ALL SELECT 'Secondaire', AVG(contribution_croissance_secondaire), AVG(contribution_croissance_secondaire) FROM secteur UNION ALL SELECT 'Tertiaire', AVG(contribution_croissance_tertiaire), AVG(contribution_croissance_tertiaire) FROM secteur ORDER BY avg_contribution DESC LIMIT 1;"
+  },
+  {
+    "question": "Quel est le ratio moyen exportations/importations entre 2015 et 2022 et quelle serait la tendance pour 2023 ?",
+    "sql": "WITH commerce AS (SELECT date, exportations_biens_fob, importations_biens_fob FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31') SELECT AVG(exportations_biens_fob/importations_biens_fob) AS ratio_moyen, (SELECT (exportations_biens_fob / importations_biens_fob) + ((exportations_biens_fob / importations_biens_fob) - LAG(exportations_biens_fob / importations_biens_fob) OVER (ORDER BY date)) FROM commerce ORDER BY date DESC LIMIT 1) AS forecast_2023 FROM commerce;"
+  },
+  {
+    "question": "Quel est le solde budgétaire global moyen hors dons sur 2018-2022 et prévision pour 2023 ?",
+    "sql": "WITH solde AS (SELECT date, solde_budgetaire_global_hors_dons FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2018-01-01' AND '2022-12-31') SELECT AVG(solde_budgetaire_global_hors_dons) AS solde_moyen, (SELECT solde_budgetaire_global_hors_dons + (solde_budgetaire_global_hors_dons - LAG(solde_budgetaire_global_hors_dons) OVER (ORDER BY date)) FROM solde ORDER BY date DESC LIMIT 1) AS forecast_2023 FROM solde;"
+  },
+  {
+    "question": "Quelle a été la plus forte augmentation annuelle de la masse monétaire M2 sur 2015-2022, et quel serait l'impact prévisionnel pour 2023 ?",
+    "sql": "WITH m2 AS (SELECT date, agregats_monnaie_masse_monetaire_m2 FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31'), variation AS (SELECT date, agregats_monnaie_masse_monetaire_m2, agregats_monnaie_masse_monetaire_m2 - LAG(agregats_monnaie_masse_monetaire_m2) OVER (ORDER BY date) AS diff FROM m2) SELECT MAX(diff) AS max_augmentation, (SELECT agregats_monnaie_masse_monetaire_m2 + diff FROM variation ORDER BY date DESC LIMIT 1) AS forecast_2023 FROM variation;"
+  },
+  {
+    "question": "Quel est le ratio moyen actifs extérieurs nets / masse monétaire sur 2015-2022 et projection 2023 ?",
+    "sql": "WITH ratio AS (SELECT date, actifs_exterieurs_nets_bceao_avoirs_officiels / agregats_monnaie_masse_monetaire_m2 AS r FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31') SELECT AVG(r) AS ratio_moyen, (SELECT r + (r - LAG(r) OVER (ORDER BY date)) FROM ratio ORDER BY date DESC LIMIT 1) AS forecast_2023 FROM ratio;"
+  },
+  {
+    "question": "Quel est le montant moyen de l'épargne intérieure totale et son pourcentage par rapport au PIB sur 2018-2022, et la prévision pour 2023 ?",
+    "sql": "WITH epargne AS (SELECT date, epargne_interieure_milliards_fcfa, taux_epargne_interieure_pct FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2018-01-01' AND '2022-12-31') SELECT AVG(epargne_interieure_milliards_fcfa) AS avg_epargne, AVG(taux_epargne_interieure_pct) AS avg_taux, (SELECT epargne_interieure_milliards_fcfa + (epargne_interieure_milliards_fcfa - LAG(epargne_interieure_milliards_fcfa) OVER (ORDER BY date)) FROM epargne ORDER BY date DESC LIMIT 1) AS forecast_epargne_2023, (SELECT taux_epargne_interieure_pct + (taux_epargne_interieure_pct - LAG(taux_epargne_interieure_pct) OVER (ORDER BY date)) FROM epargne ORDER BY date DESC LIMIT 1) AS forecast_taux_2023 FROM epargne;"
+  },
+  {
+    "question": "Quelle a été l'année avec le plus fort service de la dette en intérêts et prévision pour 2023 ?",
+    "sql": "WITH dette AS (SELECT date, service_de_la_dette_interets FROM indicateurs_economiques_uemoa WHERE date BETWEEN '2015-01-01' AND '2022-12-31') SELECT MAX(service_de_la_dette_interets) AS max_interets, (SELECT service_de_la_dette_interets + (service_de_la_dette_interets - LAG(service_de_la_dette_interets) OVER (ORDER BY date)) FROM dette ORDER BY date DESC LIMIT 1) AS forecast_2023 FROM dette;"
+  }
+
+]
