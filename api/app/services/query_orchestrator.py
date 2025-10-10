@@ -228,6 +228,8 @@ class QueryOrchestrator:
                 - Ne jamais divulguer la requête SQL ni le résultat brut.
                 - Ne jamais inventer de données ni extrapoler au-delà du résultat SQL.
                 - Ne jamais faire des repetitions inutiles.
+                - Tout ce qui est un montant doit être en chiffres exacts avec unités(FCFA) (ex: 1234.56 milliards FCFA).
+                - Le PIB est toujours en milliards FCFA.
 
                 La réponse doit être rédigée comme un rapport synthétique fluide, destiné à un décideur, et ne jamais contenir de titres ou sous-titres visibles.
 
