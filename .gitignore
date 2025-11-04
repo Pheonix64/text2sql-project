@@ -1,139 +1,275 @@
-<<<<<<< HEAD
-./env
-/.env
+# ========================================<<<<<<< HEAD
+
+# Text-to-SQL Project - .gitignore./env
+
+# ========================================/.env
+
 =======
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+
+# ==================== Environment ====================# Byte-compiled / optimized / DLL files
+
+.env__pycache__/
+
+.env.local*.py[codz]
+
+.env.*.local*$py.class
+
+*.env
 
 # C extensions
-*.so
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
+# ==================== Python ====================*.so
+
+# Byte-compiled / optimized / DLL files
+
+__pycache__/# Distribution / packaging
+
+*.py[cod].Python
+
+*$py.classbuild/
+
+*.sodevelop-eggs/
+
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Distribution / packagingdownloads/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+.Pythoneggs/
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
+build/.eggs/
+
+develop-eggs/lib/
+
+dist/lib64/
+
+downloads/parts/
+
+eggs/sdist/
+
+.eggs/var/
+
+lib/wheels/
+
+lib64/share/python-wheels/
+
+parts/*.egg-info/
+
+sdist/.installed.cfg
+
+var/*.egg
+
+wheels/MANIFEST
+
+pip-wheel-metadata/
+
+share/python-wheels/# PyInstaller
+
+*.egg-info/#  Usually these files are written by a python script from a template
+
+.installed.cfg#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+
+*.egg*.manifest
+
+MANIFEST*.spec
+
+
+
+# PyInstaller# Installer logs
+
+*.manifestpip-log.txt
+
+*.specpip-delete-this-directory.txt
+
+
+
+# Unit test / coverage reports# Unit test / coverage reports
+
+htmlcov/htmlcov/
+
+.tox/.tox/
+
+.nox/.nox/
+
+.coverage.coverage
+
+.coverage.*.coverage.*
+
+.cache.cache
+
+nosetests.xmlnosetests.xml
+
+coverage.xmlcoverage.xml
+
+*.cover*.cover
+
+*.py,cover*.py.cover
+
+.hypothesis/.hypothesis/
+
+.pytest_cache/.pytest_cache/
+
 cover/
 
-# Translations
-*.mo
-*.pot
+# Virtual environments
+
+venv/# Translations
+
+ENV/*.mo
+
+env/*.pot
+
+.venv
 
 # Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
 
-# Flask stuff:
-instance/
+# IDEs*.log
+
+.vscode/local_settings.py
+
+.idea/db.sqlite3
+
+*.swpdb.sqlite3-journal
+
+*.swo
+
+*~# Flask stuff:
+
+.DS_Storeinstance/
+
 .webassets-cache
 
-# Scrapy stuff:
+# Jupyter Notebook
+
+.ipynb_checkpoints# Scrapy stuff:
+
 .scrapy
 
-# Sphinx documentation
+# pyenv
+
+.python-version# Sphinx documentation
+
 docs/_build/
 
-# PyBuilder
-.pybuilder/
-target/
+# ==================== Docker ====================
+
+# Docker volumes data (si hors docker-compose)# PyBuilder
+
+postgres-data/.pybuilder/
+
+chroma-data/target/
+
+ollama-models/
 
 # Jupyter Notebook
-.ipynb_checkpoints
 
-# IPython
-profile_default/
+# ==================== Logs ====================.ipynb_checkpoints
+
+*.log
+
+logs/# IPython
+
+*.log.*profile_default/
+
 ipython_config.py
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+# ==================== Temporary files ====================
 
-# pipenv
+*.tmp# pyenv
+
+*.temp#   For a library or package, you might want to ignore these files since the code is
+
+*.bak#   intended to run in multiple environments; otherwise, check them in:
+
+*.swp# .python-version
+
+*.swo
+
+.~*# pipenv
+
 #   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
+
+# ==================== OS ====================#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+
+# macOS#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+
+.DS_Store#   install all needed dependencies.
+
+.AppleDouble#Pipfile.lock
+
+.LSOverride
 
 # UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
+
+# Windows#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
+
+Thumbs.db#   This is especially recommended for binary packages to ensure reproducibility, and is more
+
+ehthumbs.db#   commonly ignored for libraries.
+
+Desktop.ini#uv.lock
+
+$RECYCLE.BIN/
 
 # poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
+
+# Linux#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+
+.directory#   This is especially recommended for binary packages to ensure reproducibility, and is more
+
+.Trash-*#   commonly ignored for libraries.
+
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-#poetry.toml
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+# ==================== Application Specific ====================#poetry.lock
+
+# Backups#poetry.toml
+
+backup/
+
+*.backup# pdm
+
+*.dump#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+
 #   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-#pdm.lock
+
+# ChromaDB local data (if not using Docker volume)#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
+
+chroma/#pdm.lock
+
 #pdm.toml
-.pdm-python
-.pdm-build/
 
-# pixi
+# Model downloads (outside of Docker).pdm-python
+
+models/.pdm-build/
+
+*.bin
+
+*.gguf# pixi
+
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-#pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+# ==================== Keep These ====================#pixi.lock
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+# Ne pas ignorer ces fichiers importants#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
+
+!.gitignore#   in the .venv directory. It is recommended not to include this directory in version control.
+
+!.env.example.pixi
+
+!.dockerignore
+
+!docs/**/*.md# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+
+!docs/**/*.json__pypackages__/
+
+!postgres/init.sql
+
+!postgres/*.csv# Celery stuff
+
+!api/requirements.txtcelerybeat-schedule
+
+!api/Dockerfilecelerybeat.pid
+
 
 # SageMath parsed files
 *.sage.py

@@ -18,22 +18,26 @@ ENV PATH="/home/appuser/.local/bin:${PATH}"
 COPY --chown=appuser:appuser requirements.txt .
 
 # --- MODIFICATION MAJEURE ---
-# On combine toute l'installation en une seule commande RUN pour la propreté
-# et pour optimiser les couches Docker.
+# Installation en plusieurs étapes avec gestion des erreurs réseau
+# Stratégie: séparer les installations critiques et ajouter des retry
 RUN \
-    # 1. Mettre à jour pip à la dernière version pour éviter les bugs et avoir toutes les options
-    pip install --no-cache-dir --user --upgrade pip && \
-    # 2. Installer torch en version CPU depuis sa source officielle
-    pip install --no-cache-dir --user --timeout=600 \
-        torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
-    # 3. Installer le reste des paquets, y compris sentence-transformers
-    pip install --no-cache-dir --user --timeout=600 \
-        sentence-transformers \
-        -r requirements.txt
+    # 1. Mettre à jour pip avec retry
+    pip install --no-cache-dir --user --upgrade pip --retries 5 && \
+    # 2. Installer torch en version CPU depuis sa source officielle avec retry
+    pip install --no-cache-dir --user --timeout=600 --retries 5 \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Séparer l'installation des autres paquets pour isoler les problèmes
+RUN pip install --no-cache-dir --user --timeout=600 --retries 5 \
+    sentence-transformers
+
+# Installer le reste des dépendances
+RUN pip install --no-cache-dir --user --timeout=600 --retries 5 \
+    -r requirements.txt
 
 # Étape 3: Copie du code de l'application
 COPY --chown=appuser:appuser ./app ./app
 
 # Étape 4: Commande d'exécution
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8100
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100"]

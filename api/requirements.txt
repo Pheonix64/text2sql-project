@@ -21,6 +21,8 @@ langchain>=0.3.27
 langchain-community>=0.3.27
 langchain-chroma>=0.1.4
 langchain-ollama>=0.2.2
+langchain_core>=0.3.27
+langchain-huggingface>=0.1.0
 
 # Sécurité et validation SQL
 sqlglot

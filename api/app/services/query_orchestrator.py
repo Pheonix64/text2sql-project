@@ -26,7 +26,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_ollama import ChatOllama
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.utilities import SQLDatabase
 
@@ -40,7 +40,7 @@ from app.config import settings
 logger = getLogger(__name__)
 
 
-DEFAULT_EXAMPLES_PATH = "examples.json"
+DEFAULT_EXAMPLES_PATH = "docs/examples.json"
 
 
 class QueryOrchestrator:

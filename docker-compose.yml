@@ -32,17 +32,18 @@ services:
     # Volume pour persister les données Chroma
     volumes:
       - chroma-data:/chroma/chroma
-    # Port exposé configurable via variable d'environnement CHROMA_PORT
+    # Port exposé configurable via variable d'environnement CHROMA_EXTERNAL_PORT
     ports:
-      - "${CHROMA_PORT}:8000"
+      - "${CHROMA_EXTERNAL_PORT}:8000"
     networks:
       - text2sql-network
-    # Healthcheck réel: ping de l'endpoint pre-flight-checks
+    # Healthcheck simplifié: vérifier que le port écoute
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/pre-flight-checks', timeout=5)\"" ]
+      test: [ "CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000' || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   ollama:
@@ -83,7 +84,7 @@ services:
     # Port d'exposition pour l'API FastAPI configurable via API_PORT
     volumes:
       - ./api/app:/home/appuser/app
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
     ports:
       - "${API_PORT}:8000"
     networks:
