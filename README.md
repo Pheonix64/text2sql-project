@@ -1,4 +1,4 @@
-# 🚀 Text-to-SQL - Système d'Analyse de Données Économiques
+# 🚀 Text-to-SQL - Assistant d'Analyse de Données Économiques
 
 <div align="center">
 
