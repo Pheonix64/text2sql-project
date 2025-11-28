@@ -27,6 +27,8 @@ Documentation complète du projet Text-to-SQL.
 | Document | Description |
 |----------|-------------|
 | **[Architecture Diagram](ARCHITECTURE_DIAGRAM.md)** | Schémas et architecture du système |
+| **[UML Activity Diagram](UML_ACTIVITY_DIAGRAM.md)** | Diagrammes d'activité UML (format texte) |
+| **[PlantUML Diagrams](PLANTUML_GUIDE.md)** | 📊 Diagrammes UML interactifs (PlantUML) |
 | **[LangChain Index](LANGCHAIN_INDEX.md)** | Documentation du pipeline LangChain |
 | **[LangChain Refactoring](LANGCHAIN_REFACTORING.md)** | Détails de l'implémentation LangChain |
 | **[LangChain Quick Start](LANGCHAIN_QUICK_START.md)** | Guide rapide LangChain |

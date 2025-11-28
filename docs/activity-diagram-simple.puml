@@ -1,0 +1,81 @@
+@startuml Text-to-SQL - Diagramme d'Activité Simplifié
+
+title Flux de Traitement d'une Question - API Text-to-SQL\n(Version Simplifiée pour Utilisateurs Non-Techniques)
+
+|Utilisateur|
+start
+:Poser une question\nen français;
+note right
+  Exemple: "Quel est le PIB 
+  du Sénégal en 2023?"
+end note
+
+|#LightBlue|Système API|
+:Recevoir la question;
+
+if (La question est valide?) then (non)
+  |Utilisateur|
+  :Recevoir message d'erreur;
+  stop
+else (oui)
+  :Chercher des exemples\nsimilaires dans la mémoire;
+  note right
+    Le système se souvient
+    de questions similaires
+    posées auparavant
+  end note
+  
+  :Demander à l'Intelligence\nArtificielle de créer\nune requête en langage\ninformatique (SQL);
+  note right
+    L'IA utilise les exemples
+    trouvés pour mieux
+    comprendre la question
+  end note
+  
+  :Vérifier que la requête\ncréée est correcte et\nsécurisée;
+  
+  if (La requête est valide?) then (non)
+    |Utilisateur|
+    :Recevoir message d'erreur;
+    stop
+  else (oui)
+    |#LightGreen|Base de Données|
+    :Chercher les informations\ndans la base de données;
+    
+    if (Données trouvées?) then (non)
+      |Utilisateur|
+      :Recevoir "Aucune\ninformation trouvée";
+      stop
+    else (oui)
+      :Récupérer les données;
+      
+      |#LightBlue|Système API|
+      :Demander à l'Intelligence\nArtificielle d'expliquer\nles résultats en français;
+      note right
+        L'IA transforme les chiffres
+        en une réponse claire
+        et compréhensible
+      end note
+      
+      :Préparer la réponse finale;
+      note right
+        La réponse contient:
+        - Explication en français
+        - Les données trouvées
+        - Informations techniques
+      end note
+      
+      |Utilisateur|
+      :Recevoir la réponse\nen français;
+      note right
+        Exemple de réponse:
+        "Le PIB du Sénégal en 2023
+        est de 28,5 milliards de dollars"
+      end note
+      
+      stop
+    endif
+  endif
+endif
+
+@enduml

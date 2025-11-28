@@ -1,0 +1,62 @@
+@startuml Indexation des Exemples SQL
+
+title Flux d'Indexation des Exemples - Version Simplifiée
+
+|Administrateur|
+start
+:Demander d'enregistrer\nde nouveaux exemples;
+note right
+  Exemples = paires de:
+  - Question en français
+  - Requête SQL correspondante
+end note
+
+|#LightBlue|Système API|
+:Recevoir la demande;
+
+if (Exemples fournis?) then (non)
+  :Charger les exemples\npar défaut du fichier;
+  note right
+    Fichier: docs/examples.json
+  end note
+else (oui)
+  :Utiliser les exemples\nfournis;
+endif
+
+:Pour chaque exemple...;
+
+partition "Traitement Parallèle" {
+  |#LightYellow|Pour chaque exemple|
+  :Lire la question;
+  
+  :Transformer la question\nen code numérique;
+  note right
+    L'ordinateur convertit
+    le texte en nombres
+    pour pouvoir le comparer
+  end note
+  
+  :Sauvegarder dans\nla mémoire (ChromaDB);
+  note right
+    La mémoire permet de
+    retrouver rapidement
+    des exemples similaires
+  end note
+}
+
+|#LightBlue|Système API|
+:Compter les exemples\nenregistrés;
+
+:Confirmer le succès;
+
+|Administrateur|
+:Recevoir confirmation\navec nombre d'exemples;
+note right
+  Exemple:
+  "3 exemples enregistrés
+  avec succès"
+end note
+
+stop
+
+@enduml

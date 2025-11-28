@@ -1,0 +1,85 @@
+@startuml Interprétation Prédiction Inflation
+
+title Analyse des Prévisions d'Inflation - Version Simplifiée
+
+|Économiste|
+start
+:Envoyer les prévisions\nd'inflation à analyser;
+note right
+  Prévisions incluent:
+  - Taux prévu: 2.5%
+  - Facteurs d'influence:
+    * Prix du pétrole: +0.8
+    * Taux de change: -0.3
+    * Masse monétaire: +0.5
+end note
+
+|#LightBlue|Système API|
+:Recevoir les données;
+
+:Vérifier que les\ninformations sont complètes;
+
+if (Données valides?) then (non)
+  |Économiste|
+  :Recevoir message d'erreur;
+  stop
+else (oui)
+  
+  :Identifier les facteurs\nles plus importants;
+  note right
+    Le système trie les facteurs
+    pour trouver ceux qui ont
+    le plus d'impact
+  end note
+  
+  :Classer en positif\nou négatif;
+  note right
+    Positif = augmente l'inflation
+    Négatif = diminue l'inflation
+  end note
+  
+  |#Orange|Intelligence Artificielle|
+  :Analyser la situation\néconomique;
+  note right
+    L'IA joue le rôle
+    d'un économiste expert
+    de la BCEAO
+  end note
+  
+  :Générer une explication\nen langage clair;
+  
+  :Proposer des recommandations\npour la politique monétaire;
+  
+  :Évaluer les risques;
+  
+  |#LightBlue|Système API|
+  :Organiser les résultats;
+  note right
+    Résultats contiennent:
+    1. Explication économique
+    2. Recommandations
+    3. Évaluation des risques
+    4. Détail des facteurs
+  end note
+  
+  |Économiste|
+  :Recevoir l'analyse complète;
+  note right
+    Exemple:
+    "L'inflation prévue de 2.5%
+    est principalement due à
+    la hausse des prix du pétrole.
+    
+    Recommandations:
+    - Surveiller les prix
+      énergétiques
+    - Maintenir la politique
+      monétaire actuelle
+    
+    Risque: Modéré"
+  end note
+  
+  stop
+endif
+
+@enduml

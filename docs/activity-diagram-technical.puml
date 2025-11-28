@@ -1,0 +1,151 @@
+@startuml Text-to-SQL - Diagramme d'Activité Détaillé
+
+title Flux de Traitement Text-to-SQL - Version Technique Complète
+
+|#LightBlue|Client|
+start
+:Envoyer requête POST /api/ask\navec question en JSON;
+
+|#LightGreen|FastAPI Router|
+:Recevoir la requête;
+:Valider le format JSON;
+
+if (Question présente?) then (non)
+  :Retourner erreur HTTP 400;
+  |Client|
+  :Recevoir message d'erreur;
+  stop
+else (oui)
+  
+  |#LightYellow|QueryOrchestrator|
+  partition "Phase 1: Recherche Sémantique" {
+    :Encoder la question\navec HuggingFaceEmbeddings;
+    note right
+      Transformation de la question
+      en vecteur numérique
+      (embedding)
+    end note
+    
+    |#Pink|ChromaDB|
+    :Rechercher les 3 exemples\nles plus similaires;
+    note right
+      Recherche par similarité
+      vectorielle (cosine similarity)
+    end note
+    
+    :Retourner exemples\n(question + SQL);
+  }
+  
+  partition "Phase 2: Génération SQL" {
+    |#LightYellow|QueryOrchestrator|
+    :Récupérer le schéma\nde la base de données;
+    note right
+      Tables, colonnes, types,
+      contraintes, commentaires
+    end note
+    
+    :Construire le prompt\nLangChain;
+    note right
+      Prompt contient:
+      - Schéma DB
+      - Exemples similaires
+      - Question utilisateur
+      - Instructions
+    end note
+    
+    |#Orange|LLM (Ollama/Mistral)|
+    :Générer la requête SQL;
+    note right
+      Le LLM crée le SQL
+      basé sur le contexte fourni
+    end note
+    
+    :Retourner SQL dans\nbalises <sql>...</sql>;
+    
+    |#LightYellow|QueryOrchestrator|
+    :Extraire le SQL\ndes balises;
+  }
+  
+  partition "Phase 3: Validation SQL" {
+    :Valider syntaxe\navec SQLGlot;
+    
+    if (SQL valide?) then (non)
+      |Client|
+      :Retourner erreur HTTP 500;
+      stop
+    else (oui)
+      :Vérifier type de requête;
+      
+      if (Type = SELECT?) then (non)
+        note right
+          Sécurité: seules les
+          requêtes SELECT sont
+          autorisées
+        end note
+        |Client|
+        :Retourner erreur HTTP 403\n(opération non autorisée);
+        stop
+      else (oui)
+        :Nettoyer et formater SQL;
+      endif
+    endif
+  }
+  
+  partition "Phase 4: Exécution SQL" {
+    |#Cyan|PostgreSQL|
+    :Se connecter avec\nllm_user (READ-ONLY);
+    
+    :Exécuter la requête SQL\navec timeout 30s;
+    
+    if (Exécution réussie?) then (non)
+      |Client|
+      :Retourner erreur HTTP 500;
+      stop
+    else (oui)
+      :Récupérer résultats\n(max 1000 lignes);
+      
+      :Convertir en format JSON;
+      
+      :Retourner données;
+    endif
+  }
+  
+  partition "Phase 5: Analyse des Résultats" {
+    |#LightYellow|QueryOrchestrator|
+    :Construire prompt d'analyse;
+    note right
+      Prompt contient:
+      - Question originale
+      - SQL exécuté
+      - Résultats JSON
+      - Demande de réponse naturelle
+    end note
+    
+    |#Orange|LLM (Ollama/Mistral)|
+    :Analyser et générer\nréponse en français;
+    
+    :Retourner texte explicatif;
+  }
+  
+  partition "Phase 6: Formatage Réponse" {
+    |#LightYellow|QueryOrchestrator|
+    :Construire AnswerResponse;
+    note right
+      Contient:
+      - answer: texte en français
+      - sql_query: SQL généré
+      - result_data: données JSON
+      - metadata: stats
+    end note
+    
+    |#LightGreen|FastAPI Router|
+    :Retourner HTTP 200\navec JSON;
+    
+    |Client|
+    :Recevoir et afficher\nla réponse;
+    
+    stop
+  }
+endif
+
+@enduml
