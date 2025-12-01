@@ -77,20 +77,12 @@ Content-Type: application/json
 ```json
 {
   "answer": "string",           // Réponse en langage naturel
-  "sql_query": "string",        // Requête SQL générée
-  "result_data": [              // Résultats de la requête
-    {
-      "column1": "value1",
-      "column2": "value2"
-    }
-  ],
-  "metadata": {                 // Métadonnées optionnelles
-    "execution_time": "string",
-    "rows_returned": 0,
-    "similar_examples_found": 0
-  }
+  "generated_sql": "string | null",  // Requête SQL générée (peut être null)
+  "sql_result": "string | null"      // Résultats SQL en format string (peut être null)
 }
 ```
+
+**Note** : Les champs retournés correspondent exactement au schéma `AnswerResponse` défini dans `api/app/models/schemas.py`
 
 #### Exemples
 
@@ -100,28 +92,29 @@ Content-Type: application/json
 curl -X POST "http://localhost:8008/api/ask" \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "Quel est le PIB du Sénégal en 2023?"
+    "question": "Quel est le taux d'\''inflation en 2021 ?"
   }'
 ```
 
 **Réponse :**
 ```json
 {
-  "answer": "Le PIB du Sénégal en 2023 est de 28,5 milliards de dollars.",
-  "sql_query": "SELECT pays, annee, valeur FROM indicateurs WHERE pays='Sénégal' AND indicateur='PIB' AND annee=2023",
-  "result_data": [
-    {
-      "pays": "Sénégal",
-      "annee": 2023,
-      "valeur": 28500000000
-    }
-  ],
-  "metadata": {
-    "execution_time": "1.2s",
-    "rows_returned": 1
-  }
+  "answer": "En 2021, l'UEMOA a enregistré un taux d'inflation moyen de 3,9%.",
+  "generated_sql": "SELECT taux_inflation_moyen_annuel_ipc_pct FROM indicateurs_economiques_uemoa WHERE date = '2021-01-01';",
+  "sql_result": "[{\"taux_inflation_moyen_annuel_ipc_pct\": 3.9}]"
 }
 ```
+
+**Réponse :**
+```json
+{
+  "answer": "En 2021, l'UEMOA a enregistré un taux d'inflation moyen de 3,9%, dépassant légèrement l'objectif de stabilité des prix de la BCEAO fixé à 3%.",
+  "generated_sql": "SELECT taux_inflation_moyen_annuel_ipc_pct FROM indicateurs_economiques_uemoa WHERE date = '2021-01-01';",
+  "sql_result": "[{\"taux_inflation_moyen_annuel_ipc_pct\": 3.9}]"
+}
+```
+
+**Note importante** : La table utilisée est `indicateurs_economiques_uemoa`, pas `indicateurs`. Voir le schéma complet dans `postgres/init.sql`.
 
 **Exemple 2 : Agrégation**
 
