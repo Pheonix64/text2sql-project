@@ -19,8 +19,8 @@ async def lifespan(app: FastAPI):
     logging.info("Démarrage de l'application...")
     # Instanciation tardive pour garantir que les services dépendants sont prêts
     app.state.orchestrator = QueryOrchestrator()
-    # Indexation initiale des requêtes de référence
-    app.state.orchestrator.index_reference_queries()
+    # Chargement du schéma et indexation des exemples depuis examples.json
+    await app.state.orchestrator.initialize_context()
     yield
     logging.info("Arrêt de l'application...")
 

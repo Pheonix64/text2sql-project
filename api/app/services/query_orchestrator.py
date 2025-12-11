@@ -13,6 +13,7 @@ import re
 import json
 import asyncio
 import textwrap
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from logging import getLogger
 import datetime
@@ -40,7 +41,7 @@ from app.config import settings
 logger = getLogger(__name__)
 
 
-DEFAULT_EXAMPLES_PATH = "docs/examples.json"
+DEFAULT_EXAMPLES_PATH = "/home/appuser/docs/examples.json"
 
 
 class QueryOrchestrator:
@@ -98,7 +99,7 @@ class QueryOrchestrator:
 
         # prompt templates centralisés
         self.sql_generation_template = PromptTemplate(
-            input_variables=["db_schema", "context_queries", "user_question"],
+            input_variables=["db_schema", "context_queries", "user_question", "chat_history", "correction_instruction"],
             template=self._sql_generation_template_text(),
         )
         self.natural_language_template = PromptTemplate(
@@ -118,6 +119,13 @@ class QueryOrchestrator:
 
         # init keyword sets
         self._init_keyword_sets()
+
+        # Conversational memory for Text-to-SQL
+        self.conversations: Dict[str, List[Dict[str, str]]] = {}
+        
+        # Conversational memory for Inflation Interpretation
+        # Stores: {conversation_id: {"last_interpretation": {...}, "questions": [...]}}
+        self.inflation_conversations: Dict[str, Dict[str, Any]] = {}
 
         logger.info("QueryOrchestrator initialisé.")
 
@@ -165,6 +173,38 @@ class QueryOrchestrator:
                 "question": "Balance commerciale (export - import) pour 2019.",
                 "sql": "SELECT date, balance_des_biens FROM indicateurs_economiques_uemoa WHERE date = '2019-01-01';"
             },
+            {
+                "question": "Comment l'inflation a-t-elle évolué au cours des 5 dernières années ?",
+                "sql": "SELECT date, taux_inflation_moyen_annuel_ipc_pct FROM indicateurs_economiques_uemoa ORDER BY date DESC LIMIT 5;"
+            },
+            {
+                "question": "Évolution du taux d'inflation entre 2018 et 2023.",
+                "sql": "SELECT date, taux_inflation_moyen_annuel_ipc_pct FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) BETWEEN 2018 AND 2023 ORDER BY date;"
+            },
+            {
+                "question": "Quel est le taux d'inflation en glissement annuel pour 2022 ?",
+                "sql": "SELECT date, taux_inflation_glissement_annuel_pct FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) = 2022;"
+            },
+            {
+                "question": "Évolution du PIB nominal de 2018 à 2024.",
+                "sql": "SELECT date, pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) BETWEEN 2018 AND 2024 ORDER BY date;"
+            },
+            {
+                "question": "Quelle est la masse monétaire M2 en 2021 ?",
+                "sql": "SELECT date, agregats_monnaie_masse_monetaire_m2 FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) = 2021;"
+            },
+            {
+                "question": "Quelle est la progression du PIB entre 2020 et 2024 ?",
+                "sql": "SELECT date, pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) BETWEEN 2020 AND 2024 ORDER BY date;"
+            },
+            {
+                "question": "Quel est le taux de croissance moyen du PIB sur les 5 dernières années ?",
+                "sql": "SELECT AVG(taux_croissance_reel_pib_pct) AS croissance_moyenne FROM indicateurs_economiques_uemoa ORDER BY date DESC LIMIT 5;"
+            },
+            {
+                "question": "Compare le PIB de 2020 et 2024.",
+                "sql": "SELECT date, pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) IN (2020, 2024) ORDER BY date;"
+            },
         ]
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -184,29 +224,62 @@ class QueryOrchestrator:
     def _sql_generation_template_text(self) -> str:
         return textwrap.dedent(
             """\
-            ### Instruction (génération SQL)
+            ### Instruction (génération SQL avec raisonnement)
             Tu es un expert SQL (PostgreSQL) et analyste économique spécialisé en politique monétaire de l'UEMOA.
-            Ton objectif : convertir la question de l'utilisateur en UNE SEULE requête SQL SELECT (ou WITH ... SELECT)
-            basée strictement sur le schéma, les descriptions fournis et les exemples.
+            
+            **ÉTAPE 1 - RAISONNEMENT (Chain of Thought)**
+            Avant de générer le SQL, analyse la question étape par étape :
+            1. Quelles informations sont demandées ? (indicateur, période, agrégation...)
+            2. Quelles colonnes du schéma correspondent à ces informations ?
+            3. Quelle logique SQL appliquer ? (filtrage, agrégation, tri, calcul...)
+            
+            Écris ton raisonnement entre les balises <raisonnement> et </raisonnement>.
+            
+            **ÉTAPE 2 - GÉNÉRATION SQL**
+            Après le raisonnement, génère la requête SQL entre les balises <sql> et </sql>.
 
-            Contraintes strictes :
-            - Toutes les données de la base concernent par défaut l'ensemble de l'Union (BCEAO).
-            - Retourne UNIQUEMENT la requête SQL, sans explication ni markdown. Débuter par SELECT ou WITH et finir par ';'.
-            - Ne génère jamais d'instruction de modification (INSERT/UPDATE/DELETE/DROP...).
-            - Préfère DATE_TRUNC pour les agrégations temporelles ; utilise AVG,SUM,COUNT,MAX,MIN, etc. si nécessaire.
-            - N'invente pas de colonnes ni de tables : n'utilise que ce qui est dans le schéma.
-            - Si ambiguïté sur la période, faire une hypothèse raisonnable (ex: dernière année disponible).
+            ⚠️ CONTRAINTES CRITIQUES ⚠️
+            1. N'INVENTE JAMAIS de noms de colonnes ! Utilise UNIQUEMENT les colonnes listées dans le schéma ci-dessous.
+            2. Pour l'inflation, la colonne s'appelle : taux_inflation_moyen_annuel_ipc_pct (PAS "taux_inflation_pct" ni "inflation")
+            3. Pour le PIB, la colonne s'appelle : pib_nominal_milliards_fcfa
+            4. Pour la croissance, la colonne s'appelle : taux_croissance_reel_pib_pct
+            5. Les données sont annuelles avec une date au format 'YYYY-01-01' (ex: '2022-01-01' pour l'année 2022)
+            6. Pour filtrer par année, utilise : EXTRACT(YEAR FROM date) = 2022 ou date = '2022-01-01'
+            7. Ne génère JAMAIS d'instruction de modification (INSERT/UPDATE/DELETE/DROP...)
+            
+            📊 RÈGLE D'OR : VALEURS EXACTES 📊
+            - Retourne TOUJOURS les valeurs exactes de la base de données (date + valeur).
+            - PRIVILÉGIE les requêtes simples qui retournent les données brutes plutôt que des calculs complexes.
+            - Pour une évolution/progression, retourne simplement les valeurs année par année avec ORDER BY date.
+            - L'analyse et les calculs seront faits par l'assistant, pas par SQL.
+            
+            ⚠️ SYNTAXE SQL INTERDITE ⚠️
+            - JAMAIS de syntaxe comme colonne[condition] (ex: pib[annee=2024] est INVALIDE)
+            - JAMAIS de références de tableau avec crochets []
+            - Pour comparer des valeurs entre années, utilise :
+              * Soit une simple requête avec WHERE et ORDER BY
+              * Soit LAG/LEAD pour les variations
+              * Soit des sous-requêtes séparées
+            
+            Exemple CORRECT pour progression entre 2020 et 2024 :
+            SELECT date, pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE EXTRACT(YEAR FROM date) IN (2020, 2024) ORDER BY date;
 
-            ### Schéma et descriptions
+            ### Schéma de la base de données (COLONNES DISPONIBLES)
             {db_schema}
 
-            ### Exemples de requêtes similaires (few-shot)
+            ### Exemples de requêtes similaires (COPIE les noms de colonnes de ces exemples)
             {context_queries}
+
+            ### Historique de la conversation
+            {chat_history}
 
             ### Question de l'utilisateur
             "{user_question}"
 
-            ### Requête SQL
+            ### Instruction de correction (si applicable)
+            {correction_instruction}
+
+            ### Réponse (raisonnement puis SQL entre balises)
             """
         )
 
@@ -217,23 +290,38 @@ class QueryOrchestrator:
 
                 Toutes les données concernent l'ensemble de l'Union (BCEAO) sauf mention explicite de 'country'. Ne jamais inventer de chiffres hors du résultat SQL.
 
-                La réponse doit :
-                - Commencer par 3 à 4 phrases résumant l’information principale.
+                ⚠️ CAS PARTICULIERS À GÉRER ⚠️
+                
+                1. Si le RÉSULTAT SQL est vide, ne contient que "[]" ou ne retourne aucune ligne :
+                   → Réponds EXACTEMENT : "Les données demandées ne sont pas disponibles dans notre base pour la période ou l'indicateur spécifié. Notre base couvre les indicateurs macroéconomiques de l'UEMOA de 2005 à 2024. Pourriez-vous vérifier la période ou l'indicateur demandé ?"
+                   → Ne jamais inventer de chiffres dans ce cas.
+                
+                2. Si la question de l'utilisateur est ambiguë, trop vague, hors sujet économique, ou incompréhensible :
+                   → Réponds EXACTEMENT : "Votre question nécessite des précisions pour que je puisse vous fournir une analyse pertinente. Pourriez-vous reformuler en précisant :
+                   - L'indicateur économique souhaité (PIB, inflation, dette, balance commerciale, etc.)
+                   - La période concernée (année ou plage d'années entre 2005 et 2024)
+                   - Le pays ou si c'est pour l'ensemble de l'UEMOA
+                   - Le type d'analyse attendu (valeur, évolution, comparaison, moyenne, etc.)"
+                
+                3. Si les données sont partielles (certaines années demandées absentes du résultat) :
+                   → Mentionne explicitement les années pour lesquelles les données sont disponibles.
+                   → Indique les années manquantes si pertinent.
+
+                RÈGLES POUR LA RÉPONSE (si des données sont disponibles) :
+                - Commencer par 3 à 4 phrases résumant l'information principale.
                 - Donner le contexte et la portée.
-                - Présenter les chiffres clés issus du résultat SQL(langage pour communiquer avec une base de données).
+                - Présenter les chiffres clés issus du résultat SQL (langage pour communiquer avec une base de données).
                 - Proposer une interprétation raisonnée.
                 - Expliquer brièvement la méthodologie et/ou les colonnes utilisées.
                 - Mentionner les limites et/ou hypothèses éventuelles.
                 - Se terminer par 2 à 4 recommandations pratiques.
                 - Ne jamais divulguer la requête SQL ni le résultat brut.
                 - Ne jamais inventer de données ni extrapoler au-delà du résultat SQL.
-                - Ne jamais faire des repetitions inutiles.
-                - Tout ce qui est un montant doit être en chiffres exacts avec unités(FCFA) (ex: 1234.56 milliards FCFA).
+                - Ne jamais faire des répétitions inutiles.
+                - Tout ce qui est un montant doit être en chiffres exacts avec unités (FCFA) (ex: 1234.56 milliards FCFA).
                 - Le PIB est toujours en milliards FCFA.
 
                 La réponse doit être rédigée comme un rapport synthétique fluide, destiné à un décideur, et ne jamais contenir de titres ou sous-titres visibles.
-
-                Si `sql_result_str` est vide, répondre exactement : "Aucune donnée exploitable trouvée — merci de préciser/affiner votre question."
 
                 ### Question
                 {user_question}
@@ -241,7 +329,6 @@ class QueryOrchestrator:
                 ### Résultat SQL
                 {sql_result_str}
 
-                ### date actuelle
                 ### Réponse
                 """
                         )
@@ -254,25 +341,33 @@ class QueryOrchestrator:
                 db_schema=inputs.get("db_schema", self.db_schema),
                 context_queries=inputs.get("context_queries", ""),
                 user_question=inputs.get("user_question", ""),
+                chat_history=inputs.get("chat_history", ""),
+                correction_instruction=inputs.get("correction_instruction", ""),
             )
             llm_text = await self._call_llm(prompt)
             sql = self._extract_sql_from_text(llm_text)
-            return {"generated_sql": sql, "llm_text": llm_text}
+            reasoning = self._extract_reasoning_from_text(llm_text)
+            if reasoning:
+                logger.info(f"Raisonnement LLM: {reasoning[:200]}...")  # Log les 200 premiers caractères
+            return {"generated_sql": sql, "llm_text": llm_text, "reasoning": reasoning}
 
         # Runnable to validate/execute and produce final answer
         async def _run_response_generation(inputs: Dict[str, Any]) -> Dict[str, Any]:
             generated_sql = inputs.get("generated_sql", "")
             user_question = inputs.get("user_question", "")
-            #current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            # Si le résultat est déjà fourni (par la boucle de retry), on l'utilise
+            sql_result = inputs.get("sql_result")
 
-            # validate
-            if not generated_sql or not re.search(r"^\s*(SELECT|WITH)\b", generated_sql, flags=re.IGNORECASE):
-                raise ValueError("Aucune requête SELECT/WITH générée.")
-            if not self._validate_sql(generated_sql):
-                raise ValueError("La requête SQL générée a été jugée non sécurisée.")
+            if sql_result is None:
+                # validate
+                if not generated_sql or not re.search(r"^\s*(SELECT|WITH)\b", generated_sql, flags=re.IGNORECASE):
+                    raise ValueError("Aucune requête SELECT/WITH générée.")
+                if not self._validate_sql(generated_sql):
+                    raise ValueError("La requête SQL générée a été jugée non sécurisée.")
 
-            # execute
-            sql_result = await self._validate_and_execute_sql(generated_sql)
+                # execute
+                sql_result = await self._validate_and_execute_sql(generated_sql)
+            
             sql_result_str = str(sql_result)
 
             # NL prompt
@@ -316,14 +411,25 @@ class QueryOrchestrator:
         return await self._execute_sql_readonly(sql)
 
     # ------------------------ Public pipeline -----------------------------------
-    async def process_user_question(self, user_question: str) -> Dict[str, Any]:
-        # 0) Security and routing
-        if self._is_question_harmful(user_question):
-            return {"answer": "Désolé, je ne peux pas traiter cette demande."}
-        if not self._needs_data_retrieval(user_question):
-            return {"answer": "Désolé, cette question ne concerne pas les données économiques de l'UEMOA/BCEAO."}
+    async def process_user_question(self, user_question: str, conversation_id: Optional[str] = None) -> Dict[str, Any]:
+        # 0) Ensure conversation_id exists and check history
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+            logger.info(f"Génération d'un nouveau conversation_id: {conversation_id}")
+        
+        has_history = False
+        if conversation_id in self.conversations and self.conversations[conversation_id]:
+            has_history = True
 
-        # 1) Similarity context
+        # 1) Security and routing
+        if self._is_question_harmful(user_question):
+            return {"answer": "Désolé, je ne peux pas traiter cette demande.", "conversation_id": conversation_id}
+        
+        # On passe has_history pour assouplir le filtrage si on est dans une conversation
+        if not self._needs_data_retrieval(user_question, has_history=has_history):
+            return {"answer": "Désolé, cette question ne concerne pas les données économiques de l'UEMOA/BCEAO.", "conversation_id": conversation_id}
+
+        # 2) Similarity context
         try:
             similar_docs = await self._similarity_search(user_question, k=5)
             context_queries = "\n".join(similar_docs)
@@ -331,44 +437,94 @@ class QueryOrchestrator:
             logger.warning("Similarity search failed: %s", e)
             context_queries = ""
 
-        # 2) Generate SQL
-        try:
-            sql_res = await self.sql_generation_runnable.ainvoke({
-                "user_question": user_question,
-                "db_schema": self.db_schema,
-                "context_queries": context_queries,
-            })
-            generated_sql = sql_res.get("generated_sql", "")
-        except Exception as e:
-            logger.error("Erreur pendant génération SQL: %s", e)
-            return {"answer": "Désolé, une erreur est survenue lors de la génération de la requête SQL."}
+        # 3) Chat History Management
+        chat_history_str = ""
+        if has_history:
+            history = self.conversations.get(conversation_id, [])
+            # On garde les 5 derniers échanges pour le contexte
+            recent_history = history[-5:]
+            for turn in recent_history:
+                chat_history_str += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
-        # 3) Sanity & validate
-        if not generated_sql or not re.search(r"^\s*(SELECT|WITH)\b", generated_sql, flags=re.IGNORECASE):
+        # 4) Generate SQL with Retry Loop (Auto-Correction)
+        MAX_RETRIES = 3
+        correction_instruction = ""
+        generated_sql = ""
+        sql_result = []
+        last_error = None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                if attempt > 0:
+                    logger.info(f"Tentative de correction SQL {attempt + 1}/{MAX_RETRIES}")
+                
+                sql_res = await self.sql_generation_runnable.ainvoke({
+                    "user_question": user_question,
+                    "db_schema": self.db_schema,
+                    "context_queries": context_queries,
+                    "chat_history": chat_history_str,
+                    "correction_instruction": correction_instruction
+                })
+                generated_sql = sql_res.get("generated_sql", "")
+
+                # 3) Sanity & validate
+                if not generated_sql or not re.search(r"^\s*(SELECT|WITH)\b", generated_sql, flags=re.IGNORECASE):
+                    raise ValueError("Pas de requête SQL valide générée (SELECT/WITH manquant).")
+
+                if not self._validate_sql(generated_sql):
+                    raise ValueError("Requête SQL jugée non sécurisée par le validateur.")
+
+                # 4) Execute (Try to run the query)
+                sql_result = await self._validate_and_execute_sql(generated_sql)
+                
+                # Si on arrive ici, c'est un succès
+                last_error = None
+                break
+
+            except Exception as e:
+                logger.warning(f"Échec tentative {attempt + 1}: {e}")
+                last_error = e
+                # On prépare l'instruction de correction pour la prochaine itération
+                # On inclut le schéma pour rappeler les colonnes disponibles
+                correction_instruction = (
+                    f"⚠️ ERREUR À CORRIGER ⚠️\n"
+                    f"La requête précédente a échoué avec l'erreur suivante :\n"
+                    f"```\n{e}\n```\n"
+                    f"Requête générée (incorrecte) : {generated_sql}\n\n"
+                    f"RAPPEL DU SCHÉMA DISPONIBLE:\n{self.db_schema}\n\n"
+                    f"Analyse l'erreur et utilise UNIQUEMENT les colonnes listées ci-dessus pour corriger la requête."
+                )
+        
+        if last_error:
             return {
-                "answer": (
-                    "Je n'ai pas pu générer une requête SQL pertinente pour cette question. "
-                    "Pouvez-vous préciser la période, les colonnes ou la condition souhaitée ?"
-                ),
+                "answer": f"Désolé, je n'ai pas réussi à générer une requête valide après {MAX_RETRIES} tentatives. Erreur technique : {last_error}",
                 "generated_sql": generated_sql,
+                "conversation_id": conversation_id
             }
 
-        if not self._validate_sql(generated_sql):
-            return {"answer": "La requête SQL générée a été jugée non sécurisée et a été bloquée.", "generated_sql": generated_sql}
-
-        # 4) Execute & NL generation
+        # 5) NL generation (using the successful sql_result)
         try:
             response_res = await self.response_generation_runnable.ainvoke({
                 "generated_sql": generated_sql,
                 "user_question": user_question,
+                "sql_result": sql_result  # Pass the result we already got
             })
             final_answer = response_res.get("final_answer", "")
-            sql_result = response_res.get("sql_result", [])
-        except Exception as e:
-            logger.error("Erreur pendant exécution SQL / génération réponse: %s", e)
-            return {"answer": "Une erreur est survenue lors de l'exécution ou de la formulation de la réponse.", "generated_sql": generated_sql}
+            
+            # 6) Update History
+            if conversation_id:
+                if conversation_id not in self.conversations:
+                    self.conversations[conversation_id] = []
+                self.conversations[conversation_id].append({
+                    "user": user_question,
+                    "assistant": final_answer
+                })
 
-        return {"answer": final_answer, "generated_sql": generated_sql, "sql_result": str(sql_result)}
+        except Exception as e:
+            logger.error("Erreur pendant génération réponse finale: %s", e)
+            return {"answer": "Une erreur est survenue lors de la formulation de la réponse.", "generated_sql": generated_sql, "conversation_id": conversation_id}
+
+        return {"answer": final_answer, "generated_sql": generated_sql, "sql_result": str(sql_result), "conversation_id": conversation_id}
 
     # ------------------------ Indexing / examples --------------------------------
     def index_reference_queries(self, examples: Optional[List[Dict[str, str]]] = None) -> int:
@@ -444,12 +600,26 @@ class QueryOrchestrator:
 
     # ------------------------ SQL validation & execution ------------------------
     def _extract_sql_from_text(self, text: str) -> str:
+        """Extrait le SQL depuis la réponse du LLM, en priorité depuis les balises <sql>."""
         if not text:
             return ""
+        
+        # 1. Priorité aux balises <sql>...</sql> (Chain of Thought format)
+        sql_tag = re.search(r"<sql>([\s\S]*?)</sql>", text, flags=re.IGNORECASE)
+        if sql_tag:
+            candidate = sql_tag.group(1).strip()
+            # Nettoyer les éventuels blocs markdown à l'intérieur
+            candidate = re.sub(r"```(?:sql)?\s*", "", candidate)
+            candidate = re.sub(r"```", "", candidate)
+            return candidate.strip()
+        
+        # 2. Blocs de code markdown ```sql ... ```
         code_block = re.search(r"```(?:sql)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
         if code_block:
             candidate = code_block.group(1).strip()
             return candidate
+        
+        # 3. Fallback : chercher SELECT ou WITH directement
         m = re.search(r"\b(SELECT|WITH)\b[\s\S]*", text, flags=re.IGNORECASE)
         if m:
             candidate = text[m.start():]
@@ -457,7 +627,17 @@ class QueryOrchestrator:
             if semi != -1:
                 candidate = candidate[:semi+1]
             return candidate.strip()
+        
         return text.strip()
+
+    def _extract_reasoning_from_text(self, text: str) -> str:
+        """Extrait le raisonnement depuis les balises <raisonnement>."""
+        if not text:
+            return ""
+        reasoning_tag = re.search(r"<raisonnement>([\s\S]*?)</raisonnement>", text, flags=re.IGNORECASE)
+        if reasoning_tag:
+            return reasoning_tag.group(1).strip()
+        return ""
 
     def _validate_sql(self, sql_query: str) -> bool:
         try:
@@ -524,13 +704,14 @@ class QueryOrchestrator:
                 logger.error(f"Erreur lors du formatage de la prédiction d'inflation : {e}")
                 raise
 
-    async def generate_inflation_interpretation(self, body) -> dict:
+    async def generate_inflation_interpretation(self, body, timeout: int = 120) -> dict:
         """
         Génère une interprétation économique spécialisée des prédictions d'inflation SHAP 
         pour les économistes et analystes de la BCEAO.
         
         Args:
             body: InflationInterpretationRequest contenant les données de prédiction et paramètres
+            timeout: Timeout en secondes pour l'appel LLM (par défaut 120)
             
         Returns:
             Dictionnaire contenant l'interprétation économique formatée spécifique à l'inflation
@@ -555,7 +736,7 @@ class QueryOrchestrator:
             async with self.llm_sem:
                 response = await asyncio.wait_for(
                     self.llm.ainvoke(interpretation_prompt),
-                    timeout=120
+                    timeout=timeout
                 )
             
             # Extract content from AIMessage
@@ -571,28 +752,119 @@ class QueryOrchestrator:
         except Exception as e:
             logger.error(f"Erreur lors de la génération de l'interprétation d'inflation : {e}")
             raise
-
-    def _validate_inflation_data(self, prediction_data):
+    
+    def _validate_inflation_data(self, prediction_data) -> Dict[str, Any]:
         """
         Valide que les données de prédiction d'inflation sont cohérentes.
+        Inclut des validations de série temporelle.
+        
+        Returns:
+            Dict contenant les résultats de validation et les warnings
         """
+        validation_result = {
+            "is_valid": True,
+            "warnings": [],
+            "errors": []
+        }
+        
         predictions = prediction_data.get("predictions", {})
         
-        # Vérifier que les valeurs d'inflation sont dans une plage raisonnable
+        if not predictions:
+            validation_result["errors"].append("Aucune prédiction fournie")
+            validation_result["is_valid"] = False
+            return validation_result
+        
+        # 1. Vérifier que les valeurs d'inflation sont dans une plage raisonnable
         for period, value in predictions.items():
             if not isinstance(value, (int, float)):
-                raise ValueError(f"Valeur d'inflation invalide pour {period}: {value}")
-            if value < -10 or value > 50:  # Plage raisonnable pour l'inflation (%)
-                logger.warning(f"Valeur d'inflation inhabituelle pour {period}: {value}%")
+                validation_result["errors"].append(f"Valeur d'inflation invalide pour {period}: {value}")
+                validation_result["is_valid"] = False
+            elif value < -10 or value > 50:  # Plage raisonnable pour l'inflation (%)
+                validation_result["warnings"].append(f"Valeur d'inflation inhabituelle pour {period}: {value}%")
         
-        # Vérifier la présence des facteurs d'inflation typiques
+        # 2. Validation de série temporelle - Dates ordonnées et sans doublons
+        dates = list(predictions.keys())
+        if len(dates) != len(set(dates)):
+            validation_result["warnings"].append("Dates en double détectées dans les prédictions")
+        
+        # Essayer de parser et trier les dates
+        try:
+            parsed_dates = []
+            for date_str in dates:
+                # Supporter plusieurs formats: YYYY-MM, YYYY-MM-DD, YYYY-Q1
+                if "-Q" in date_str:
+                    # Format trimestre: 2024-Q1 -> 2024-01
+                    year, quarter = date_str.split("-Q")
+                    month = (int(quarter) - 1) * 3 + 1
+                    parsed_dates.append((date_str, datetime(int(year), month, 1)))
+                elif len(date_str) == 7:  # YYYY-MM
+                    parsed_dates.append((date_str, datetime.strptime(date_str, "%Y-%m")))
+                elif len(date_str) == 10:  # YYYY-MM-DD
+                    parsed_dates.append((date_str, datetime.strptime(date_str, "%Y-%m-%d")))
+                else:
+                    validation_result["warnings"].append(f"Format de date non reconnu: {date_str}")
+            
+            # Vérifier l'ordre chronologique
+            if parsed_dates:
+                sorted_dates = sorted(parsed_dates, key=lambda x: x[1])
+                original_order = [d[0] for d in parsed_dates]
+                sorted_order = [d[0] for d in sorted_dates]
+                if original_order != sorted_order:
+                    validation_result["warnings"].append("Les dates ne sont pas en ordre chronologique")
+                
+                # Vérifier les gaps (plus de 3 mois entre deux prédictions)
+                for i in range(1, len(sorted_dates)):
+                    diff_days = (sorted_dates[i][1] - sorted_dates[i-1][1]).days
+                    if diff_days > 95:  # ~3 mois
+                        validation_result["warnings"].append(
+                            f"Gap temporel important détecté entre {sorted_dates[i-1][0]} et {sorted_dates[i][0]}"
+                        )
+        except Exception as e:
+            validation_result["warnings"].append(f"Impossible de valider l'ordre des dates: {str(e)}")
+        
+        # 3. Vérifier la cohérence des variations (pas de sauts > 10 points)
+        values = list(predictions.values())
+        for i in range(1, len(values)):
+            if abs(values[i] - values[i-1]) > 10:
+                validation_result["warnings"].append(
+                    f"Variation abrupte d'inflation détectée: {values[i-1]:.2f}% → {values[i]:.2f}%"
+                )
+        
+        # 4. Vérifier la présence des facteurs d'inflation typiques
         shap_importance = prediction_data.get("global_shap_importance", {})
         expected_factors = ["taux_change", "prix_petrole", "masse_monetaire", "alimentation"]
         
+        missing_factors = []
         for factor in expected_factors:
             found = any(factor in key.lower() for key in shap_importance.keys())
             if not found:
-                logger.info(f"Facteur d'inflation typique non trouvé: {factor}")
+                missing_factors.append(factor)
+        
+        if missing_factors:
+            validation_result["warnings"].append(f"Facteurs d'inflation typiques non trouvés: {', '.join(missing_factors)}")
+        
+        # 5. Vérifier que les SHAP individuels correspondent aux dates de prédiction
+        individual_shap = prediction_data.get("individual_shap_explanations", {})
+        if individual_shap:
+            shap_dates = set(individual_shap.keys())
+            pred_dates = set(predictions.keys())
+            if shap_dates != pred_dates:
+                missing_in_shap = pred_dates - shap_dates
+                extra_in_shap = shap_dates - pred_dates
+                if missing_in_shap:
+                    validation_result["warnings"].append(f"SHAP manquants pour les dates: {missing_in_shap}")
+                if extra_in_shap:
+                    validation_result["warnings"].append(f"SHAP supplémentaires non associés: {extra_in_shap}")
+        
+        # Log des résultats
+        if validation_result["errors"]:
+            for error in validation_result["errors"]:
+                logger.error(f"Validation inflation: {error}")
+        if validation_result["warnings"]:
+            for warning in validation_result["warnings"]:
+                logger.warning(f"Validation inflation: {warning}")
+        
+        return validation_result
 
     def _build_inflation_interpretation_prompt(self, prediction_data, audience, include_monetary_analysis, focus_bceao):
         """
@@ -904,15 +1176,25 @@ class QueryOrchestrator:
         ]
         return any(term in q for term in banned_terms)
 
-    def _needs_data_retrieval(self, text_q: str) -> bool:
+    def _needs_data_retrieval(self, text_q: str, has_history: bool = False) -> bool:
         """
         Heuristique stricte pour décider si la question concerne UNIQUEMENT les données économiques UEMOA/BCEAO.
         Refuse les questions générales, hors-sujet, ou trop vagues.
+        Si has_history est True, on est plus tolérant (questions de suivi).
         """
-        if not text_q or len(text_q.strip()) < 5:  # Questions trop courtes
+        if not text_q or len(text_q.strip()) < 2:  # Questions vides ou trop courtes
             return False
 
         q = text_q.lower().strip()
+
+        # Si on a un historique, on accepte les questions courtes de suivi (ex: "Et en 2024 ?")
+        if has_history:
+            # On vérifie juste qu'il y a un minimum de contenu pertinent (date ou mot clé ou juste une phrase)
+            # Pour l'instant, on accepte presque tout si ce n'est pas vide, car le contexte peut donner du sens à tout.
+            return True
+
+        if len(text_q.strip()) < 5:
+            return False
 
         economic_count = sum(1 for kw in self.economic_keywords if kw in q)
         sql_count = sum(1 for kw in self.sql_keywords if kw in q)

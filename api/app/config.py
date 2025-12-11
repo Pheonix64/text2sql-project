@@ -30,6 +30,11 @@ class Settings(BaseSettings):
 
     # Embedding Model
     EMBEDDING_MODEL_NAME: str
+    
+    # Timeouts configurables (en secondes)
+    LLM_TIMEOUT_SQL: int = 90  # Timeout pour génération SQL
+    LLM_TIMEOUT_INFLATION: int = 120  # Timeout pour interprétation inflation (plus long car plus de texte)
+    LLM_TIMEOUT_NARRATIVE: int = 60  # Timeout pour génération narrative
 
     @property
     def DATABASE_URL(self) -> str:

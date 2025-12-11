@@ -6,12 +6,14 @@ from typing import List, Optional, Literal
 class QuestionRequest(BaseModel):
     """Schéma pour la question de l'utilisateur."""
     question: str
+    conversation_id: Optional[str] = None
 
 class AnswerResponse(BaseModel):
     """Schéma pour la réponse finale."""
     answer: str
     generated_sql: str | None = None
     sql_result: str | None = None
+    conversation_id: str | None = None
 
 class IndexingRequest(BaseModel):
     """Schéma pour la requête d'indexation manuelle."""
@@ -83,6 +85,7 @@ class InflationPredictionResponse(BaseModel):
 class InflationInterpretationRequest(BaseModel):
     """
     Requête pour l'interprétation économique des prédictions d'inflation SHAP.
+    Supporte les conversations multi-tours avec conversation_id.
     """
     prediction_data: InflationPredictionResponse
     analysis_language: Literal["fr", "en"] = "fr"
@@ -90,17 +93,21 @@ class InflationInterpretationRequest(BaseModel):
     include_policy_recommendations: bool = True
     include_monetary_policy_analysis: bool = True  # Analyse spécifique à la politique monétaire
     focus_on_bceao_mandate: bool = True  # Focus sur le mandat de stabilité des prix de la BCEAO
+    conversation_id: Optional[str] = None  # ID de conversation pour questions de suivi
+    follow_up_question: Optional[str] = None  # Question de suivi optionnelle
 
 class InflationInterpretationResponse(BaseModel):
     """
     Réponse contenant l'interprétation économique des prédictions d'inflation.
+    Structure mise à jour pour correspondre aux tags XML.
     """
+    reasoning: Optional[str] = None  # Raisonnement interne du modèle
     executive_summary: str  # Résumé exécutif sur les perspectives d'inflation
-    inflation_analysis: str  # Analyse détaillée des dynamiques inflationnistes
-    key_inflation_drivers: List[str]  # Principaux facteurs de l'inflation identifiés par SHAP
-    price_stability_assessment: str  # Évaluation au regard de l'objectif de stabilité des prix
+    monthly_analysis: Optional[str] = None  # Analyse mensuelle détaillée
+    inflation_drivers: Optional[str] = None  # Facteurs inflationnistes et désinflationnistes
+    price_stability_assessment: Optional[str] = None  # Évaluation stabilité des prix vs cible BCEAO
+    risks: Optional[str] = None  # Risques haussiers et baissiers
+    limitations: Optional[str] = None  # Limites et incertitudes
     monetary_policy_recommendations: Optional[str] = None  # Recommandations pour la BCEAO
-    inflation_risks: List[str]  # Risques inflationnistes identifiés
-    model_confidence: str  # Niveau de confiance du modèle de prévision
-    target_deviation_analysis: str  # Analyse des écarts par rapport à la cible d'inflation
-    external_factors_impact: str  # Impact des facteurs externes (pétrole, taux de change, etc.)
+    conversation_id: Optional[str] = None  # ID de conversation pour suivi
+    _meta: Optional[dict] = None  # Métadonnées (tentatives, validation format)

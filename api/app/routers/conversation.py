@@ -19,10 +19,10 @@ async def ask_question(request: QuestionRequest, req: Request):
     """
     Endpoint principal pour poser une question en langage naturel.
     """
-    logger.info(f"Nouvelle question reçue : '{request.question}'")
+    logger.info(f"Nouvelle question reçue : '{request.question}' (Conversation ID: {request.conversation_id})")
     try:
         orchestrator = req.app.state.orchestrator
-        result = await orchestrator.process_user_question(request.question)
+        result = await orchestrator.process_user_question(request.question, conversation_id=request.conversation_id)
         return AnswerResponse(**result)
     except Exception as e:
         logger.error(f"Erreur inattendue dans l'endpoint /ask : {e}", exc_info=True)
