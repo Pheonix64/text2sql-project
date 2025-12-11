@@ -48,7 +48,9 @@ Reçoit et formate les prédictions du modèle d'inflation avec explicabilité S
 ### 3. `/api/forecast/inflation/interpret`
 Génère une interprétation économique détaillée des prédictions d'inflation SHAP.
 
-**Corps de la requête :**
+**Timeout :** Configurable via `LLM_TIMEOUT_INFLATION` dans la configuration (défaut: 120 secondes). Cette valeur peut être ajustée pour des analyses plus complexes nécessitant plus de temps de traitement.
+
+**Corps de la requête :
 ```json
 {
   "prediction_data": {

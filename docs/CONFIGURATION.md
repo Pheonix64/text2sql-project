@@ -50,6 +50,11 @@ LLM_MODEL=mistral:7b                       # Modèle à utiliser
 
 # ==================== Embeddings ====================
 EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+
+# ==================== Timeouts LLM ====================
+LLM_TIMEOUT_SQL=90                         # Timeout pour génération SQL (secondes)
+LLM_TIMEOUT_INFLATION=120                  # Timeout pour interprétation inflation (secondes)
+LLM_TIMEOUT_NARRATIVE=60                   # Timeout pour génération narrative (secondes)
 ```
 
 ### Description Détaillée
@@ -95,6 +100,25 @@ LLM_MODEL=llama2:13b  # Pour de meilleurs résultats
   - `all-mpnet-base-v2` - Plus performant mais plus lourd
   - `paraphrase-multilingual-MiniLM-L12-v2` - Multilingue
   - `all-MiniLM-L12-v2` - Plus précis que L6
+
+#### Timeouts LLM (Configurables)
+
+Les timeouts sont configurables pour chaque type d'opération LLM :
+
+| Variable | Par défaut | Description |
+|----------|------------|-------------|
+| `LLM_TIMEOUT_SQL` | 90 | Timeout pour la génération SQL |
+| `LLM_TIMEOUT_INFLATION` | 120 | Timeout pour l'interprétation d'inflation SHAP |
+| `LLM_TIMEOUT_NARRATIVE` | 60 | Timeout pour la génération narrative |
+
+**Exemple d'ajustement :**
+```env
+# Pour des modèles plus lents ou des analyses complexes
+LLM_TIMEOUT_INFLATION=180  # 3 minutes
+LLM_TIMEOUT_SQL=120        # 2 minutes
+```
+
+**Note :** Le timeout d'inflation est plus long par défaut car l'interprétation économique génère plus de texte et nécessite une analyse approfondie des facteurs SHAP.
 
 ---
 

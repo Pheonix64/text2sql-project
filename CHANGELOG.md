@@ -4,6 +4,32 @@ Historique des modifications du projet Text-to-SQL.
 
 ---
 
+## [1.2.0] - Décembre 2025
+
+### ✨ Améliorations
+
+#### Timeouts Configurables
+- ⏱️ Ajout du paramètre `timeout` à `generate_inflation_interpretation()` pour permettre des timeouts configurables
+- ⚙️ Nouvelles variables de configuration dans `config.py` :
+  - `LLM_TIMEOUT_SQL` (défaut: 90s) - Timeout pour génération SQL
+  - `LLM_TIMEOUT_INFLATION` (défaut: 120s) - Timeout pour interprétation inflation SHAP
+  - `LLM_TIMEOUT_NARRATIVE` (défaut: 60s) - Timeout pour génération narrative
+
+### 🐛 Corrections
+- 🔧 Fix erreur `got an unexpected keyword argument 'timeout'` dans `generate_inflation_interpretation()`
+- 🔧 Correction de l'appel depuis `forecast.py` avec `timeout=settings.LLM_TIMEOUT_INFLATION`
+
+### 📚 Documentation
+- 📖 Mise à jour `API_REFERENCE.md` - Section "Paramètres de Configuration" pour endpoint inflation
+- 📖 Mise à jour `API_REFERENCE_CORRECTED.md` - Documentation du timeout
+- 📖 Mise à jour `CONFIGURATION.md` - Nouvelle section "Timeouts LLM (Configurables)"
+- 📖 Mise à jour `FORECASTING_INTEGRATION.md` - Info timeout pour endpoint interpret
+- 📖 Mise à jour `SHAP_PREDICTION_GUIDE.md` - Documentation timeout configurable
+- 📖 Mise à jour `GUIDE_UTILISATEUR.md` - Exemple avec timeout client
+- 📖 Mise à jour `DOCUMENTATION_UPDATE_SUMMARY.md` - Ajout section mises à jour récentes
+
+---
+
 ## [1.1.0] - Novembre 2025
 
 ### ✨ Améliorations Majeures

@@ -40,6 +40,7 @@ Voir le fichier `example_shap_response.json` pour un exemple complet.
 - **Objectif** : Générer l'interprétation économique de l'inflation
 - **Input** : `InflationInterpretationRequest`
 - **Output** : `InflationInterpretationResponse`
+- **Timeout** : Configurable via `LLM_TIMEOUT_INFLATION` (défaut: 120 secondes)
 
 ## Types d'analyses supportées
 

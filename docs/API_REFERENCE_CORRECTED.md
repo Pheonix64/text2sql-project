@@ -498,6 +498,14 @@ Traduit les résultats techniques SHAP en **analyses économiques détaillées**
 - Rapports d'analyse inflation pour économistes
 - Communication vulgarisée pour décideurs politiques
 
+#### Paramètres de Configuration
+
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `LLM_TIMEOUT_INFLATION` | int | 120 | Timeout en secondes pour l'appel LLM (configurable dans `.env` ou `config.py`) |
+
+**Note** : Le timeout est plus long pour cet endpoint car l'interprétation économique génère plus de texte et nécessite une analyse approfondie des facteurs SHAP.
+
 #### Requête
 
 **Body:**

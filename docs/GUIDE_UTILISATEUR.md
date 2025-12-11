@@ -323,6 +323,10 @@ Endpoint : `POST /api/forecast/inflation/interpret`
 
 **Cas d'usage :** Comprendre les facteurs qui influencent les prévisions d'inflation
 
+**Configuration du Timeout :**
+Le timeout pour cet endpoint est configurable via la variable `LLM_TIMEOUT_INFLATION` (défaut: 120 secondes).
+Cette valeur peut être ajustée dans le fichier `.env` ou `config.py` pour des analyses plus complexes.
+
 **Exemple :**
 ```python
 import requests
@@ -343,7 +347,8 @@ response = requests.post(
     json={
         "prediction_data": prediction_data,
         "context": "Analyse pour politique monétaire"
-    }
+    },
+    timeout=150  # Timeout client (recommandé > LLM_TIMEOUT_INFLATION)
 )
 
 interpretation = response.json()

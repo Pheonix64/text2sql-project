@@ -1,7 +1,46 @@
 # 📋 Résumé des Mises à Jour de Documentation
 
-**Date** : 1er décembre 2025  
+**Date** : 11 décembre 2025  
+**Dernière mise à jour** : Ajout des timeouts configurables pour les endpoints LLM  
 **Contexte** : Analyse approfondie et mise à jour rigoureuse de la documentation pour permettre la compréhension et la reproduction exacte du système Text-to-SQL BCEAO.
+
+---
+
+## 🆕 Mises à Jour Récentes (11 décembre 2025)
+
+### Paramètres de Timeout Configurables
+
+La méthode `generate_inflation_interpretation` accepte désormais un paramètre `timeout` configurable :
+
+**Fichier modifié** : `api/app/services/query_orchestrator.py`
+
+```python
+async def generate_inflation_interpretation(self, body, timeout: int = 120) -> dict:
+    """
+    Génère une interprétation économique spécialisée des prédictions d'inflation SHAP.
+    
+    Args:
+        body: InflationInterpretationRequest contenant les données de prédiction
+        timeout: Timeout en secondes pour l'appel LLM (par défaut 120)
+    """
+```
+
+### Variables de Configuration Ajoutées
+
+**Fichier** : `api/app/config.py`
+
+| Variable | Défaut | Description |
+|----------|--------|-------------|
+| `LLM_TIMEOUT_SQL` | 90 | Timeout génération SQL |
+| `LLM_TIMEOUT_INFLATION` | 120 | Timeout interprétation inflation |
+| `LLM_TIMEOUT_NARRATIVE` | 60 | Timeout génération narrative |
+
+### Documentation Mise à Jour
+
+- ✅ `API_REFERENCE.md` - Ajout section "Paramètres de Configuration" pour `/api/forecast/inflation/interpret`
+- ✅ `CONFIGURATION.md` - Nouvelle section "Timeouts LLM (Configurables)" avec exemples
+- ✅ `FORECASTING_INTEGRATION.md` - Ajout info timeout pour endpoint interpret
+- ✅ `SHAP_PREDICTION_GUIDE.md` - Documentation du timeout configurable
 
 ---
 

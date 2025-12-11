@@ -262,6 +262,12 @@ curl -X POST "http://localhost:8008/api/forecast/inflation/prediction" \
 
 Interpréter les prédictions d'inflation pour les économistes.
 
+#### Paramètres de Configuration
+
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `LLM_TIMEOUT_INFLATION` | int | 120 | Timeout en secondes pour l'appel LLM (configurable dans `.env` ou `config.py`) |
+
 #### Requête
 
 **Body:**
