@@ -51,6 +51,7 @@ Ce projet est une **API REST intelligente** qui permet d'interroger une base de 
 - Recherche sémantique d'exemples similaires
 - Validation et exécution sécurisée
 - Réponses en langage naturel
+- **Export CSV des données brutes** 📥
 
 ### 📊 Analyse de Prévisions
 - Génération de narratifs économiques
@@ -160,6 +161,13 @@ docker-compose up -d
 
 **Temps de démarrage initial :** 5-10 minutes (téléchargement des modèles)
 
+**Note :** Si vous utilisez une version déjà déployée, pandas devrait déjà être installé. Sinon, reconstruisez l'image :
+
+```bash
+docker-compose build api-fastapi
+docker-compose up -d
+```
+
 ### Vérification
 
 ```bash
@@ -199,25 +207,40 @@ curl http://localhost:8008/health
 curl -X POST "http://localhost:8008/api/ask" \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "Quelle est l'\''évolution du PIB en 2023?"
+    "question": "Quelle est l'\''évolution du PIB entre 2015 et 2020?"
   }'
 ```
 
 **Réponse :**
 ```json
 {
-  "answer": "En 2023, le PIB a augmenté de 2.5%...",
-  "sql_query": "SELECT annee, valeur FROM indicateurs WHERE indicateur='PIB' AND annee=2023",
-  "result_data": [...],
-  "metadata": {
-    "execution_time": "1.2s",
-    "rows_returned": 4
-  }
+  "answer": "Le PIB nominal a progressé de 15.2 milliards FCFA en 2015 à 18.7 milliards en 2020...",
+  "generated_sql": "SELECT date, pib_nominal_milliards_fcfa FROM indicateurs_economiques_uemoa WHERE date >= '2015-01-01' AND date <= '2020-12-31' ORDER BY date",
+  "sql_result": "[{...}]",
+  "conversation_id": null,
+  "query_id": "a7b3c4d5"
 }
 ```
 
+### Export des Données en CSV 📥
+
+Utilisez le `query_id` retourné pour télécharger les données brutes :
+
+```bash
+# Télécharger le CSV
+curl "http://localhost:8008/api/export/csv/a7b3c4d5" --output donnees.csv
+```
+
+Ou dans votre navigateur :
+```
+http://localhost:8008/api/export/csv/a7b3c4d5
+```
+
+**Note** : Les données sont disponibles pendant 30 minutes après la requête.
+
 ### Exemples via Python
 
+**Exemple Simple :**
 ```python
 import requests
 
@@ -229,7 +252,33 @@ response = requests.post(
 
 result = response.json()
 print(f"Réponse: {result['answer']}")
-print(f"SQL généré: {result['sql_query']}")
+print(f"SQL généré: {result['generated_sql']}")
+```
+
+**Exemple avec Export CSV :**
+```python
+import requests
+
+# 1. Poser une question
+response = requests.post(
+    "http://localhost:8008/api/ask",
+    json={"question": "Quelle est l'évolution du PIB entre 2015 et 2020?"}
+)
+
+result = response.json()
+print(f"Réponse: {result['answer']}")
+
+# 2. Télécharger les données en CSV
+if result.get('query_id'):
+    csv_response = requests.get(
+        f"http://localhost:8008/api/export/csv/{result['query_id']}"
+    )
+    
+    # Sauvegarder le fichier
+    with open("donnees_pib.csv", "wb") as f:
+        f.write(csv_response.content)
+    
+    print("✅ Données exportées dans donnees_pib.csv")
 ```
 
 ---

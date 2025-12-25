@@ -290,6 +290,61 @@ for question in questions:
 
 ## 4. Analyse de Prévisions
 
+### 4.0 Export des Données en CSV
+
+**Nouveau** : Vous pouvez maintenant télécharger les données brutes de vos questions au format CSV.
+
+Endpoint : `GET /api/export/csv/{query_id}`
+
+**Comment ça marche :**
+
+1. Lorsque vous posez une question via `/api/ask`, la réponse inclut un `query_id`
+2. Utilisez ce `query_id` pour télécharger les données en CSV
+3. Les données sont disponibles pendant 30 minutes
+
+**Exemple complet :**
+
+```python
+import requests
+
+# 1. Poser une question
+response = requests.post(
+    "http://localhost:8008/api/ask",
+    json={"question": "Quelle est l'évolution du PIB entre 2015 et 2020?"}
+)
+
+result = response.json()
+print(f"Réponse : {result['answer']}")
+print(f"Query ID : {result['query_id']}")
+
+# 2. Télécharger le CSV
+if result.get('query_id'):
+    csv_url = f"http://localhost:8008/api/export/csv/{result['query_id']}"
+    csv_response = requests.get(csv_url)
+    
+    # Sauvegarder le fichier
+    with open("donnees_pib.csv", "wb") as f:
+        f.write(csv_response.content)
+    
+    print("✅ Données exportées dans donnees_pib.csv")
+```
+
+**Via le navigateur :**
+
+Après avoir obtenu le `query_id`, ouvrez simplement :
+```
+http://localhost:8008/api/export/csv/VOTRE_QUERY_ID
+```
+
+Le fichier CSV se téléchargera automatiquement.
+
+**Format du CSV :**
+- Encodage UTF-8 avec BOM (compatible Excel)
+- En-têtes de colonnes inclus
+- Nom du fichier : `donnees_{query_id}.csv`
+
+---
+
 ### 4.1 Génération de Narration Économique
 
 Endpoint : `POST /api/forecast/narrative`

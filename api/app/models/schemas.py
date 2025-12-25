@@ -14,6 +14,7 @@ class AnswerResponse(BaseModel):
     generated_sql: str | None = None
     sql_result: str | None = None
     conversation_id: str | None = None
+    query_id: str | None = None  # Identifiant pour télécharger les données en CSV
 
 class IndexingRequest(BaseModel):
     """Schéma pour la requête d'indexation manuelle."""

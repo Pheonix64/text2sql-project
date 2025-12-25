@@ -6,6 +6,16 @@ Historique des modifications du projet Text-to-SQL.
 
 ## [1.2.0] - Décembre 2025
 
+### ✨ Nouvelles Fonctionnalités
+
+#### Export CSV des Données ✅
+- 📥 Ajout de l'endpoint `GET /api/export/csv/{query_id}` pour télécharger les données brutes
+- 📄 Les résultats des requêtes sont stockés temporairement (30 minutes)
+- 🆔 `query_id` ajouté à la réponse de `/api/ask` pour permettre l'export
+- 📊 Support du format CSV avec UTF-8 BOM (compatible Excel)
+- 🧹 Nettoyage automatique du cache après expiration
+- 🐍 Pandas installé et testé avec succès
+
 ### ✨ Améliorations
 
 #### Timeouts Configurables

@@ -8,6 +8,48 @@
 
 ## 🆕 Mises à Jour Récentes (11 décembre 2025)
 
+### Export CSV des Données Brutes
+
+Ajout d'une nouvelle fonctionnalité permettant aux utilisateurs de télécharger les données brutes de leurs requêtes au format CSV.
+
+**Fichiers créés** :
+- ✅ `docs/CSV_EXPORT_GUIDE.md` - Guide complet d'utilisation de l'export CSV
+- ✅ `test_csv_export.py` - Script de test et démonstration
+
+**Fichiers modifiés** :
+- ✅ `api/requirements.txt` - Ajout de pandas pour la conversion CSV
+- ✅ `api/app/models/schemas.py` - Ajout du champ `query_id` à `AnswerResponse`
+- ✅ `api/app/routers/conversation.py` - Nouveau endpoint `GET /api/export/csv/{query_id}`
+- ✅ `api/app/services/query_orchestrator.py` - Ajout des méthodes :
+  - `_store_query_results()` - Stockage temporaire des résultats
+  - `_cleanup_expired_cache()` - Nettoyage automatique du cache
+  - `export_query_results_to_csv()` - Conversion et export CSV
+- ✅ Documentation mise à jour :
+  - `README.md` - Ajout section export CSV
+  - `API_REFERENCE.md` - Documentation du nouvel endpoint
+  - `GUIDE_UTILISATEUR.md` - Exemples d'utilisation
+  - `CHANGELOG.md` - Historique des modifications
+
+**Caractéristiques** :
+- 📥 Téléchargement direct au format CSV
+- ⏱️ Cache temporaire de 30 minutes
+- 🔄 Nettoyage automatique des données expirées
+- 📊 Compatible Excel (UTF-8 avec BOM)
+- 🆔 Identifiant unique par requête (`query_id`)
+- 🐍 Intégration facile avec pandas
+- ✅ **Déployé et testé avec succès** (25 décembre 2025)
+
+**Installation** :
+```bash
+# Méthode 1: Rebuild complet (recommandé)
+docker-compose build api-fastapi
+docker-compose up -d
+
+# Méthode 2: Installation rapide (temporaire)
+docker exec api-fastapi pip install pandas
+docker-compose restart api-fastapi
+```
+
 ### Paramètres de Timeout Configurables
 
 La méthode `generate_inflation_interpretation` accepte désormais un paramètre `timeout` configurable :

@@ -27,6 +27,9 @@ langchain-huggingface>=0.1.0
 # Sécurité et validation SQL
 sqlglot
 
+# Data manipulation et export
+pandas
+
 # Embeddings pour la recherche sémantique
 sentence-transformers
 

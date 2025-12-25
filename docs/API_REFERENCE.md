@@ -146,6 +146,95 @@ curl -X POST "http://localhost:8008/api/ask" \
 
 ---
 
+### `GET /api/export/csv/{query_id}`
+
+Télécharger les résultats d'une requête au format CSV.
+
+#### Description
+
+Permet d'exporter les données brutes d'une requête précédente sous forme de fichier CSV. Le `query_id` est fourni dans la réponse de `/api/ask`.
+
+**Note** : Les données sont stockées temporairement pendant 30 minutes.
+
+#### Paramètres
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `query_id` | string | Identifiant retourné par `/api/ask` (requis) |
+
+#### Réponse
+
+**Status: 200 OK**
+- Fichier CSV en téléchargement direct
+- Format : UTF-8 avec BOM (compatible Excel)
+- Nom du fichier : `donnees_{query_id}.csv`
+
+**Status: 404 Not Found**
+```json
+{
+  "detail": "Aucune donnée trouvée pour cet identifiant. Les données peuvent avoir expiré."
+}
+```
+
+#### Exemple
+
+**Étape 1 : Poser une question**
+
+```bash
+curl -X POST "http://localhost:8008/api/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Quelle est l'\'\''\''évolution du PIB entre 2015 et 2020?"}'
+```
+
+**Réponse :**
+```json
+{
+  "answer": "Le PIB nominal a progressé de...",
+  "generated_sql": "SELECT date, pib_nominal_milliards_fcfa FROM ...",
+  "sql_result": "[{...}]",
+  "query_id": "a7b3c4d5"
+}
+```
+
+**Étape 2 : Télécharger le CSV**
+
+```bash
+curl "http://localhost:8008/api/export/csv/a7b3c4d5" \
+  --output donnees_pib.csv
+```
+
+Ou dans un navigateur :
+```
+http://localhost:8008/api/export/csv/a7b3c4d5
+```
+
+#### Exemple Python
+
+```python
+import requests
+
+# 1. Poser la question
+response = requests.post(
+    "http://localhost:8008/api/ask",
+    json={"question": "Quelle est l'évolution du PIB entre 2015 et 2020?"}
+)
+data = response.json()
+query_id = data.get("query_id")
+
+if query_id:
+    # 2. Télécharger le CSV
+    csv_response = requests.get(
+        f"http://localhost:8008/api/export/csv/{query_id}"
+    )
+    
+    with open("donnees.csv", "wb") as f:
+        f.write(csv_response.content)
+    
+    print("Données exportées avec succès!")
+```
+
+---
+
 ## 3. Forecast Endpoints
 
 ### `POST /api/forecast/narrative`

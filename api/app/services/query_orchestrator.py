@@ -126,6 +126,11 @@ class QueryOrchestrator:
         # Conversational memory for Inflation Interpretation
         # Stores: {conversation_id: {"last_interpretation": {...}, "questions": [...]}}
         self.inflation_conversations: Dict[str, Dict[str, Any]] = {}
+        
+        # Temporary storage for query results (for CSV export)
+        # Stores: {query_id: {"sql": str, "results": List[Dict], "timestamp": datetime}}
+        self.query_results_cache: Dict[str, Dict[str, Any]] = {}
+        self.cache_expiration_minutes = 30  # Expire after 30 minutes
 
         logger.info("QueryOrchestrator initialisé.")
 
@@ -524,7 +529,79 @@ class QueryOrchestrator:
             logger.error("Erreur pendant génération réponse finale: %s", e)
             return {"answer": "Une erreur est survenue lors de la formulation de la réponse.", "generated_sql": generated_sql, "conversation_id": conversation_id}
 
-        return {"answer": final_answer, "generated_sql": generated_sql, "sql_result": str(sql_result), "conversation_id": conversation_id}
+        # 7) Store results for CSV export (if successful)
+        query_id = None
+        if sql_result:
+            query_id = self._store_query_results(generated_sql, sql_result)
+
+        return {
+            "answer": final_answer, 
+            "generated_sql": generated_sql, 
+            "sql_result": str(sql_result), 
+            "conversation_id": conversation_id,
+            "query_id": query_id
+        }
+    
+    # ------------------------ CSV Export helpers --------------------------------
+    def _store_query_results(self, sql: str, results: List[Dict[str, Any]]) -> str:
+        """
+        Stocke temporairement les résultats d'une requête pour permettre l'export CSV.
+        Retourne un identifiant unique.
+        """
+        query_id = str(uuid.uuid4())[:8]  # Identifiant court
+        self.query_results_cache[query_id] = {
+            "sql": sql,
+            "results": results,
+            "timestamp": datetime.now()
+        }
+        
+        # Nettoyage des entrées expirées
+        self._cleanup_expired_cache()
+        
+        logger.info(f"Résultats stockés avec l'ID: {query_id}")
+        return query_id
+    
+    def _cleanup_expired_cache(self):
+        """Supprime les entrées du cache qui ont expiré."""
+        now = datetime.now()
+        expired_keys = [
+            key for key, value in self.query_results_cache.items()
+            if (now - value["timestamp"]).total_seconds() > (self.cache_expiration_minutes * 60)
+        ]
+        for key in expired_keys:
+            del self.query_results_cache[key]
+            logger.debug(f"Cache expiré supprimé: {key}")
+    
+    async def export_query_results_to_csv(self, query_id: str) -> Optional[str]:
+        """
+        Convertit les résultats d'une requête en CSV.
+        Retourne le contenu CSV sous forme de string, ou None si l'ID n'existe pas.
+        """
+        import pandas as pd
+        
+        # Nettoyage préalable du cache expiré
+        self._cleanup_expired_cache()
+        
+        if query_id not in self.query_results_cache:
+            logger.warning(f"Query ID non trouvé ou expiré: {query_id}")
+            return None
+        
+        cached_data = self.query_results_cache[query_id]
+        results = cached_data["results"]
+        
+        if not results:
+            logger.warning(f"Aucun résultat pour query_id: {query_id}")
+            return None
+        
+        try:
+            # Convertir en DataFrame puis en CSV
+            df = pd.DataFrame(results)
+            csv_string = df.to_csv(index=False, encoding='utf-8')
+            logger.info(f"Export CSV généré pour query_id: {query_id} ({len(results)} lignes)")
+            return csv_string
+        except Exception as e:
+            logger.error(f"Erreur lors de la conversion CSV: {e}")
+            return None
 
     # ------------------------ Indexing / examples --------------------------------
     def index_reference_queries(self, examples: Optional[List[Dict[str, str]]] = None) -> int:
